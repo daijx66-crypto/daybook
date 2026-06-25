@@ -194,7 +194,7 @@ function safetyExplanation(event) {
 
 export function buildDailyProjection(date, sourceEvents = EVENTS) {
   const dayEvents = eventsForDate(date, sourceEvents);
-  const dayMeta = JOURNAL_DATES.find((item) => item.date === date) || JOURNAL_DATES[0];
+  const dayMeta = JOURNAL_DATES.find((item) => item.date === date) || { theme: "每日同步" };
   const unresolvedCount = dayEvents.filter((event) => ["conflict", "quarantined", "failed", "redacted"].includes(event.state)).length;
   const syncCompleteness = dayEvents.length
     ? Math.round((dayEvents.reduce((sum, event) => sum + (stateWeights[event.state] || 0.5), 0) / dayEvents.length) * 100)

@@ -12,6 +12,7 @@ import {
 
 const app = document.querySelector("#app");
 const JOURNAL_STORAGE_KEY = "agent-sync-demo.local-events.v1";
+const LOCAL_IMPORT_FILE = "./data/events.local.jsonl";
 const loadedLocalJournal = loadLocalJournal();
 const state = {
   selectedDate: dates()[0].date,
@@ -24,8 +25,50 @@ const state = {
   generatedWeekly: false,
   search: "",
   storageStatus: loadedLocalJournal.status,
-  events: mergeEvents(EVENTS, loadedLocalJournal.events)
+  importedCount: 0,
+  events: mergeEvents(EVENTS, loadedLocalJournal.events),
+  dateList: []
 };
+
+// Build the date rail from whatever events exist (seed + local import), newest first.
+function computeDateList(events) {
+  const seedThemes = new Map(dates().map((d) => [d.date, d.theme]));
+  const uniq = [...new Set(events.map((event) => event.date))].sort((a, b) => b.localeCompare(a));
+  return uniq.map((date, index) => ({
+    date,
+    weekday: new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Shanghai", weekday: "short" }).format(new Date(`${date}T12:00:00+08:00`)),
+    label: index === 0 ? "最新" : "",
+    theme: seedThemes.get(date) || "每日同步"
+  }));
+}
+
+state.dateList = computeDateList(state.events);
+state.selectedDate = state.dateList[0]?.date || state.selectedDate;
+
+// Merge the user's REAL local activity (data/events.local.jsonl) when served over
+// http. Stays empty on file:// or when the file is absent — the public build never
+// ships real data. Runs after the first render, then re-renders.
+async function importLocalFile() {
+  try {
+    const res = await fetch(LOCAL_IMPORT_FILE, { cache: "no-store" });
+    if (!res.ok) return;
+    const text = await res.text();
+    const imported = text
+      .split(/\r?\n/)
+      .filter((line) => line.trim())
+      .map((line) => { try { return JSON.parse(line); } catch { return null; } })
+      .filter(Boolean)
+      .filter(isJournalEvent);
+    if (!imported.length) return;
+    state.events = mergeEvents(state.events, imported);
+    state.importedCount = imported.length;
+    state.dateList = computeDateList(state.events);
+    state.selectedDate = state.dateList[0].date;
+    render();
+  } catch {
+    /* file:// or no local file — expected for the standalone/public build */
+  }
+}
 
 function loadLocalJournal() {
   if (typeof localStorage === "undefined") {
@@ -139,7 +182,7 @@ function renderSidebar(daily) {
       <div class="sidebar-section">
         <div class="section-label">日期</div>
         <div class="date-list">
-          ${dates().map((item) => `
+          ${state.dateList.slice(0, 30).map((item) => `
             <button class="date-item ${item.date === state.selectedDate ? "active" : ""}" data-date="${item.date}">
               <span>${item.weekday}</span>
               <strong>${fmtDate(item.date)}</strong>
@@ -154,7 +197,7 @@ function renderSidebar(daily) {
         <div class="health-row"><span>Journal</span><strong>${state.events.length} events</strong></div>
         <div class="health-row"><span>Local writes</span><strong>${localEvents().length}</strong></div>
         <div class="health-row"><span>Persistence</span><strong>${storageLabel(state.storageStatus)}</strong></div>
-        <div class="health-row"><span>Agent intake</span><strong>JSONL ready</strong></div>
+        <div class="health-row"><span>Imported (local)</span><strong>${state.importedCount ? `${state.importedCount} real` : "JSONL ready"}</strong></div>
         <div class="health-row"><span>Feishu</span><strong>Dry-run only</strong></div>
         <div class="health-row"><span>External calls</span><strong>0</strong></div>
         <button class="secondary full-width" data-action="open-dry-run">Preview Feishu dry-run</button>
@@ -189,7 +232,7 @@ function renderTopbar(daily) {
         </label>
       </div>
       <div class="mobile-date-strip">
-        ${dates().map((item) => `
+        ${state.dateList.slice(0, 30).map((item) => `
           <button class="${item.date === state.selectedDate ? "active" : ""}" data-date="${item.date}">${item.weekday}<span>${item.date.slice(5)}</span></button>
         `).join("")}
       </div>
@@ -675,7 +718,7 @@ function bindEvents() {
 }
 
 function handleAction(action) {
-  const dateItems = dates();
+  const dateItems = state.dateList;
   const index = dateItems.findIndex((item) => item.date === state.selectedDate);
   if (action === "prev-date") {
     state.selectedDate = dateItems[Math.min(dateItems.length - 1, index + 1)].date;
@@ -753,3 +796,4 @@ function addMockNote(agentId, note) {
 }
 
 render();
+importLocalFile();
