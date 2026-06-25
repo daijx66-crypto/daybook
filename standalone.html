@@ -1734,6 +1734,48 @@ body, .app-root { transition: background-color 0.25s ease, color 0.25s ease; }
 .report-gen { margin: 8px 22px 0; }
 
 .thread-sentence { margin: 0 0 10px; font-size: 13px; color: var(--muted); }
+
+/* ============================================================
+   Collaboration view — swimlane timeline
+   ============================================================ */
+.collab { margin-top: 24px; }
+.view-toggle { width: auto; margin: 0; }
+.view-toggle button { font-size: 12px; padding: 0 12px; min-height: 30px; }
+
+.collab-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 22px; }
+.collab-card { border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; border-top: 3px solid var(--accent); background: var(--surface); }
+.collab-card-top { display: flex; align-items: center; gap: 8px; }
+.collab-card-top strong { font-size: 15px; color: var(--accent); }
+.collab-card-stat { margin-top: 6px; font-size: 13px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.collab-card-conv { margin-top: 4px; font-size: 12px; color: var(--muted); }
+
+.swimlane { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); padding: 30px 18px 18px; position: relative; }
+.swim-axis { position: relative; height: 16px; margin-left: 120px; margin-bottom: 6px; }
+.swim-axis span { position: absolute; transform: translateX(-50%); font-size: 10.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.swim-row { display: grid; grid-template-columns: 120px 1fr; align-items: center; min-height: 40px; }
+.swim-row + .swim-row { border-top: 1px dashed var(--line); }
+.swim-label { display: flex; align-items: baseline; gap: 8px; padding-right: 12px; border-left: 3px solid var(--accent); padding-left: 10px; }
+.swim-label strong { font-size: 13.5px; }
+.swim-label span { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.swim-track { position: relative; height: 40px; }
+.swim-chip {
+  position: absolute; top: 50%; transform: translate(-50%, -50%);
+  width: 13px; height: 13px; border-radius: 4px;
+  background: var(--c); border: 1px solid color-mix(in srgb, var(--c), #000 12%);
+  padding: 0; cursor: pointer;
+}
+.swim-chip:hover { transform: translate(-50%, -50%) scale(1.5); z-index: 5; }
+.swim-chip.converge { box-shadow: 0 0 0 3px color-mix(in srgb, var(--c), transparent 60%); }
+
+.collab-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 14px; }
+.collab-legend .leg { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.collab-legend .leg i { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+.collab-converge { margin-top: 18px; }
+.collab-converge h4 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.collab-converge ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.collab-converge li { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
+.collab-converge li i { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.collab-hint { margin-top: 16px; font-size: 11.5px; color: var(--faint); line-height: 1.5; }
 </style>
   </head>
   <body>
@@ -2599,6 +2641,67 @@ function buildDailyReport(date, sourceEvents = EVENTS) {
   };
 }
 
+// Collaboration view: turn one day's real events into swimlanes (row per agent,
+// x = real time, chips = sessions colored by project) + cross-agent convergence
+// (a project two+ agents both touched that day). Pure projection of existing data.
+const COLLAB_PALETTE = ["#1261d6", "#168052", "#c9541a", "#7b4dd6", "#b7791f", "#0e8a8a", "#c93860", "#3a7d22"];
+function buildCollab(date, sourceEvents = EVENTS) {
+  const dayEvents = eventsForDate(date, sourceEvents);
+  const order = ["codex", "claude_code", "hermes"];
+  const toMin = (iso) => { const [h, m] = iso.slice(11, 16).split(":"); return (+h) * 60 + (+m); };
+  const projects = [...new Set(dayEvents.map((e) => e.payload.project).filter((p) => p && p !== "后台 / 杂项"))];
+  const colorOf = (p) => { const i = projects.indexOf(p); return i < 0 ? "#9aa0a6" : COLLAB_PALETTE[i % COLLAB_PALETTE.length]; };
+
+  const byProjAgents = new Map();
+  dayEvents.forEach((e) => {
+    const p = e.payload.project;
+    if (!p || p === "后台 / 杂项") return;
+    if (!byProjAgents.has(p)) byProjAgents.set(p, new Set());
+    byProjAgents.get(p).add(e.sourceAgent);
+  });
+  const convergeProjects = new Set([...byProjAgents].filter(([, s]) => s.size >= 2).map(([p]) => p));
+
+  const lanes = order.map((agentId) => {
+    const evs = dayEvents.filter((e) => e.sourceAgent === agentId);
+    return {
+      agentId,
+      name: AGENTS[agentId].name,
+      accent: AGENTS[agentId].accent,
+      count: evs.reduce((s, e) => s + (e.payload.sessionCount || 1), 0),
+      projectCount: new Set(evs.map((e) => e.payload.project).filter((p) => p && p !== "后台 / 杂项")).size,
+      chips: evs.map((e) => ({
+        minutes: toMin(e.occurredAt),
+        time: e.occurredAt.slice(11, 16),
+        project: e.payload.project,
+        color: colorOf(e.payload.project),
+        summary: e.payload.summary,
+        converge: convergeProjects.has(e.payload.project)
+      })).sort((a, b) => a.minutes - b.minutes)
+    };
+  }).filter((l) => l.chips.length);
+
+  const cards = lanes.map((l) => {
+    const myConv = new Set(l.chips.map((c) => c.project).filter((p) => convergeProjects.has(p)));
+    const others = new Set();
+    myConv.forEach((p) => byProjAgents.get(p).forEach((a) => { if (a !== l.agentId) others.add(AGENTS[a].name); }));
+    return { agentId: l.agentId, name: l.name, accent: l.accent, count: l.count, projectCount: l.projectCount, convergeWith: [...others] };
+  });
+
+  const allMin = lanes.flatMap((l) => l.chips.map((c) => c.minutes));
+  const axisStart = allMin.length ? Math.floor(Math.min(...allMin) / 60) * 60 : 8 * 60;
+  const axisEnd = allMin.length ? Math.ceil(Math.max(...allMin) / 60) * 60 : 24 * 60;
+  const convergence = [...byProjAgents]
+    .filter(([, s]) => s.size >= 2)
+    .map(([p, s]) => ({ project: p, agents: [...s].map((a) => AGENTS[a].name), color: colorOf(p) }))
+    .sort((a, b) => b.agents.length - a.agents.length);
+
+  return {
+    lanes, cards, convergence,
+    legend: projects.slice(0, 8).map((p) => ({ name: p, color: colorOf(p) })),
+    axisStart: Math.max(0, axisStart), axisEnd: Math.min(24 * 60, Math.max(axisEnd, axisStart + 120))
+  };
+}
+
 function buildWeeklyPreview(selectedDate, sourceEvents = EVENTS) {
   // Derive the week window from the actual events, newest first, so it aligns with
   // real (ingested) dates rather than the hardcoded seed calendar.
@@ -2697,6 +2800,7 @@ const state = {
   dateOffset: 0,
   publishTarget: null,
   summarizer: prefs.summarizer,
+  view: prefs.view,
   openAgents: new Set(),
   reportGen: false,
   events: mergeEvents(EVENTS, loadedLocalJournal.events),
@@ -2721,7 +2825,7 @@ function pickDefaultDate(imported) {
 }
 
 function loadPrefs() {
-  const fallback = { lang: "zh", theme: "light", leftOpen: true, rightOpen: false, summarizer: "claude_code" };
+  const fallback = { lang: "zh", theme: "light", rightOpen: false, summarizer: "claude_code", view: "report" };
   if (typeof localStorage === "undefined") return fallback;
   try {
     return { ...fallback, ...JSON.parse(localStorage.getItem(PREFS_KEY) || "{}") };
@@ -2733,7 +2837,7 @@ function loadPrefs() {
 function persistPrefs() {
   try {
     localStorage.setItem(PREFS_KEY, JSON.stringify({
-      lang: state.lang, theme: state.theme, rightOpen: state.rightOpen, summarizer: state.summarizer
+      lang: state.lang, theme: state.theme, rightOpen: state.rightOpen, summarizer: state.summarizer, view: state.view
     }));
   } catch { /* ignore */ }
 }
@@ -2766,7 +2870,11 @@ const I18N = {
     copied: "已复制", risksLabel: "风险 / 待解决", noReport: "今天还没有可成报的真实活动。", coworkWord: "处协作",
     allAgents: "全部", wWins: "完成", wLearnings: "学到", wRisks: "风险 / 冲突", wNext: "下一步",
     mechDraft: "机械草稿 · 未经 LLM 概括", mechDraftHint: "v1 离线为机械抽取；点「生成」让选定 agent 真正概括（dry-run）",
-    summarizer: "摘要器", generate: "生成", expandRaw: "展开原话 ▾", collapseRaw: "收起原话 ▴"
+    summarizer: "摘要器", generate: "生成", expandRaw: "展开原话 ▾", collapseRaw: "收起原话 ▴",
+    viewReport: "日报", viewCollab: "协作",
+    collabCap: "今日协作", collabHeading: "今天谁在推进什么",
+    convergeWith: "交汇于", convergeHeading: "同台项目", noCollab: "今天没有可视化的真实活动。",
+    collabHint: "只读复盘：行=agent，横轴=真实时间，色块=会话（按项目着色）；同色跨行=同一项目上的交汇。", sessionsUnit: "会话"
   },
   en: {
     tagline: "Multi-agent nightly work journal", dailyReview: "Daily review · Shanghai",
@@ -2793,7 +2901,11 @@ const I18N = {
     copied: "Copied", risksLabel: "Risks / blockers", noReport: "No real activity to report yet today.", coworkWord: "co-work",
     allAgents: "All", wWins: "Wins", wLearnings: "Learnings", wRisks: "Risks / conflicts", wNext: "Next actions",
     mechDraft: "Mechanical draft · not LLM-summarized", mechDraftHint: "v1 offline = extractive; click Generate to have the chosen agent summarize (dry-run)",
-    summarizer: "Summarizer", generate: "Generate", expandRaw: "Show raw ▾", collapseRaw: "Hide raw ▴"
+    summarizer: "Summarizer", generate: "Generate", expandRaw: "Show raw ▾", collapseRaw: "Hide raw ▴",
+    viewReport: "Report", viewCollab: "Collab",
+    collabCap: "Today's collaboration", collabHeading: "Who advanced what today",
+    convergeWith: "converges with", convergeHeading: "Shared projects", noCollab: "No real activity to visualize today.",
+    collabHint: "Read-only review: rows = agents, x = real time, blocks = sessions (colored by project); same color across rows = they met on that project.", sessionsUnit: "sessions"
   }
 };
 const STANCE_I18N = {
@@ -2937,11 +3049,15 @@ function render() {
       <div class="shell">
         <main class="workspace">
           ${renderDailyHeader(daily)}
-          ${renderDailyReport(buildDailyReport(state.selectedDate, state.events))}
-          ${renderThreads(daily)}
-          <section class="agent-grid" aria-label="agents">
-            ${daily.agents.map((agent) => renderAgentColumn(agent, daily)).join("")}
-          </section>
+          ${state.view === "collab"
+            ? renderCollab(buildCollab(state.selectedDate, state.events))
+            : `
+              ${renderDailyReport(buildDailyReport(state.selectedDate, state.events))}
+              ${renderThreads(daily)}
+              <section class="agent-grid" aria-label="agents">
+                ${daily.agents.map((agent) => renderAgentColumn(agent, daily)).join("")}
+              </section>
+            `}
         </main>
         <aside class="right-panel" aria-label="evidence drawer">
           ${renderRightPanel(daily, weekly)}
@@ -3023,6 +3139,10 @@ function renderTopbar(daily) {
         <button class="icon-button" data-action="next-week" title="${t("nextDay")}" ${offset <= 0 ? "disabled" : ""}>›</button>
       </div>
       <div class="topbar-right">
+        <div class="segmented view-toggle">
+          <button class="${state.view === "report" ? "active" : ""}" data-view="report">${t("viewReport")}</button>
+          <button class="${state.view === "collab" ? "active" : ""}" data-view="collab">${t("viewCollab")}</button>
+        </div>
         <button class="icon-button ${state.rightOpen ? "on" : ""}" data-action="toggle-right" title="${t("toggleRight")}">${rightPanelIcon()}</button>
       </div>
     </header>
@@ -3219,6 +3339,53 @@ function renderThreads(daily) {
           `).join("")}
         </div>
       ` : `<div class="empty">${t("threadsEmpty")}</div>`}
+    </section>
+  `;
+}
+
+function renderCollab(collab) {
+  if (!collab.lanes.length) return `<section class="collab"><div class="empty">${t("noCollab")}</div></section>`;
+  const span = Math.max(60, collab.axisEnd - collab.axisStart);
+  const xpct = (min) => ((min - collab.axisStart) / span) * 100;
+  const ticks = [];
+  for (let m = collab.axisStart; m <= collab.axisEnd; m += 120) ticks.push(m);
+  return `
+    <section class="collab">
+      <div class="panel-heading">
+        <div><p class="small-caps">${t("collabCap")}</p><h3>${t("collabHeading")}</h3></div>
+      </div>
+      <div class="collab-cards">
+        ${collab.cards.map((c) => `
+          <div class="collab-card" style="--accent:${c.accent}">
+            <div class="collab-card-top"><span class="agent-dot"></span><strong>${escapeHtml(c.name)}</strong></div>
+            <div class="collab-card-stat">${c.count} ${t("sessionsUnit")} · ${c.projectCount} ${t("diaryProjects")}</div>
+            ${c.convergeWith.length ? `<div class="collab-card-conv">${t("convergeWith")} ${c.convergeWith.map(escapeHtml).join("、")}</div>` : ""}
+          </div>
+        `).join("")}
+      </div>
+      <div class="swimlane">
+        <div class="swim-axis">${ticks.map((m) => `<span style="left:${xpct(m)}%">${String(Math.floor(m / 60)).padStart(2, "0")}:00</span>`).join("")}</div>
+        ${collab.lanes.map((lane) => {
+          let last = -Infinity;
+          const GAP = 2.2;
+          const chips = lane.chips.map((c) => {
+            let x = xpct(c.minutes);
+            if (x - last < GAP) x = last + GAP;
+            last = x;
+            x = Math.min(x, 99);
+            const tip = `${c.time} · ${c.project}${c.summary ? " — " + clip(stripCount(c.summary), 80) : ""}`;
+            return `<button class="swim-chip ${c.converge ? "converge" : ""}" style="left:${x}%; --c:${c.color}" title="${escapeHtml(tip)}"></button>`;
+          }).join("");
+          return `<div class="swim-row"><div class="swim-label" style="--accent:${lane.accent}"><strong>${escapeHtml(lane.name)}</strong><span>${lane.count}</span></div><div class="swim-track">${chips}</div></div>`;
+        }).join("")}
+      </div>
+      <div class="collab-legend">${collab.legend.map((l) => `<span class="leg"><i style="background:${l.color}"></i>${escapeHtml(l.name)}</span>`).join("")}</div>
+      ${collab.convergence.length ? `
+        <div class="collab-converge">
+          <h4>${t("convergeHeading")}</h4>
+          <ul>${collab.convergence.map((c) => `<li><i style="background:${c.color}"></i><b>${escapeHtml(c.project)}</b>：${c.agents.map(escapeHtml).join("、")}</li>`).join("")}</ul>
+        </div>` : ""}
+      <p class="collab-hint">${t("collabHint")}</p>
     </section>
   `;
 }
@@ -3574,6 +3741,14 @@ function bindEvents() {
   document.querySelectorAll("[data-summarizer]").forEach((button) => {
     button.addEventListener("click", () => {
       state.summarizer = button.dataset.summarizer;
+      persistPrefs();
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-view]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.view = button.dataset.view;
       persistPrefs();
       render();
     });

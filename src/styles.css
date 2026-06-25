@@ -1728,3 +1728,45 @@ body, .app-root { transition: background-color 0.25s ease, color 0.25s ease; }
 .report-gen { margin: 8px 22px 0; }
 
 .thread-sentence { margin: 0 0 10px; font-size: 13px; color: var(--muted); }
+
+/* ============================================================
+   Collaboration view — swimlane timeline
+   ============================================================ */
+.collab { margin-top: 24px; }
+.view-toggle { width: auto; margin: 0; }
+.view-toggle button { font-size: 12px; padding: 0 12px; min-height: 30px; }
+
+.collab-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 22px; }
+.collab-card { border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; border-top: 3px solid var(--accent); background: var(--surface); }
+.collab-card-top { display: flex; align-items: center; gap: 8px; }
+.collab-card-top strong { font-size: 15px; color: var(--accent); }
+.collab-card-stat { margin-top: 6px; font-size: 13px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.collab-card-conv { margin-top: 4px; font-size: 12px; color: var(--muted); }
+
+.swimlane { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); padding: 30px 18px 18px; position: relative; }
+.swim-axis { position: relative; height: 16px; margin-left: 120px; margin-bottom: 6px; }
+.swim-axis span { position: absolute; transform: translateX(-50%); font-size: 10.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.swim-row { display: grid; grid-template-columns: 120px 1fr; align-items: center; min-height: 40px; }
+.swim-row + .swim-row { border-top: 1px dashed var(--line); }
+.swim-label { display: flex; align-items: baseline; gap: 8px; padding-right: 12px; border-left: 3px solid var(--accent); padding-left: 10px; }
+.swim-label strong { font-size: 13.5px; }
+.swim-label span { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.swim-track { position: relative; height: 40px; }
+.swim-chip {
+  position: absolute; top: 50%; transform: translate(-50%, -50%);
+  width: 13px; height: 13px; border-radius: 4px;
+  background: var(--c); border: 1px solid color-mix(in srgb, var(--c), #000 12%);
+  padding: 0; cursor: pointer;
+}
+.swim-chip:hover { transform: translate(-50%, -50%) scale(1.5); z-index: 5; }
+.swim-chip.converge { box-shadow: 0 0 0 3px color-mix(in srgb, var(--c), transparent 60%); }
+
+.collab-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 14px; }
+.collab-legend .leg { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.collab-legend .leg i { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+.collab-converge { margin-top: 18px; }
+.collab-converge h4 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.collab-converge ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.collab-converge li { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
+.collab-converge li i { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.collab-hint { margin-top: 16px; font-size: 11.5px; color: var(--faint); line-height: 1.5; }

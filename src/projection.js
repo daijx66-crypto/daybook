@@ -334,6 +334,67 @@ export function buildDailyReport(date, sourceEvents = EVENTS) {
   };
 }
 
+// Collaboration view: turn one day's real events into swimlanes (row per agent,
+// x = real time, chips = sessions colored by project) + cross-agent convergence
+// (a project two+ agents both touched that day). Pure projection of existing data.
+const COLLAB_PALETTE = ["#1261d6", "#168052", "#c9541a", "#7b4dd6", "#b7791f", "#0e8a8a", "#c93860", "#3a7d22"];
+export function buildCollab(date, sourceEvents = EVENTS) {
+  const dayEvents = eventsForDate(date, sourceEvents);
+  const order = ["codex", "claude_code", "hermes"];
+  const toMin = (iso) => { const [h, m] = iso.slice(11, 16).split(":"); return (+h) * 60 + (+m); };
+  const projects = [...new Set(dayEvents.map((e) => e.payload.project).filter((p) => p && p !== "后台 / 杂项"))];
+  const colorOf = (p) => { const i = projects.indexOf(p); return i < 0 ? "#9aa0a6" : COLLAB_PALETTE[i % COLLAB_PALETTE.length]; };
+
+  const byProjAgents = new Map();
+  dayEvents.forEach((e) => {
+    const p = e.payload.project;
+    if (!p || p === "后台 / 杂项") return;
+    if (!byProjAgents.has(p)) byProjAgents.set(p, new Set());
+    byProjAgents.get(p).add(e.sourceAgent);
+  });
+  const convergeProjects = new Set([...byProjAgents].filter(([, s]) => s.size >= 2).map(([p]) => p));
+
+  const lanes = order.map((agentId) => {
+    const evs = dayEvents.filter((e) => e.sourceAgent === agentId);
+    return {
+      agentId,
+      name: AGENTS[agentId].name,
+      accent: AGENTS[agentId].accent,
+      count: evs.reduce((s, e) => s + (e.payload.sessionCount || 1), 0),
+      projectCount: new Set(evs.map((e) => e.payload.project).filter((p) => p && p !== "后台 / 杂项")).size,
+      chips: evs.map((e) => ({
+        minutes: toMin(e.occurredAt),
+        time: e.occurredAt.slice(11, 16),
+        project: e.payload.project,
+        color: colorOf(e.payload.project),
+        summary: e.payload.summary,
+        converge: convergeProjects.has(e.payload.project)
+      })).sort((a, b) => a.minutes - b.minutes)
+    };
+  }).filter((l) => l.chips.length);
+
+  const cards = lanes.map((l) => {
+    const myConv = new Set(l.chips.map((c) => c.project).filter((p) => convergeProjects.has(p)));
+    const others = new Set();
+    myConv.forEach((p) => byProjAgents.get(p).forEach((a) => { if (a !== l.agentId) others.add(AGENTS[a].name); }));
+    return { agentId: l.agentId, name: l.name, accent: l.accent, count: l.count, projectCount: l.projectCount, convergeWith: [...others] };
+  });
+
+  const allMin = lanes.flatMap((l) => l.chips.map((c) => c.minutes));
+  const axisStart = allMin.length ? Math.floor(Math.min(...allMin) / 60) * 60 : 8 * 60;
+  const axisEnd = allMin.length ? Math.ceil(Math.max(...allMin) / 60) * 60 : 24 * 60;
+  const convergence = [...byProjAgents]
+    .filter(([, s]) => s.size >= 2)
+    .map(([p, s]) => ({ project: p, agents: [...s].map((a) => AGENTS[a].name), color: colorOf(p) }))
+    .sort((a, b) => b.agents.length - a.agents.length);
+
+  return {
+    lanes, cards, convergence,
+    legend: projects.slice(0, 8).map((p) => ({ name: p, color: colorOf(p) })),
+    axisStart: Math.max(0, axisStart), axisEnd: Math.min(24 * 60, Math.max(axisEnd, axisStart + 120))
+  };
+}
+
 export function buildWeeklyPreview(selectedDate, sourceEvents = EVENTS) {
   // Derive the week window from the actual events, newest first, so it aligns with
   // real (ingested) dates rather than the hardcoded seed calendar.

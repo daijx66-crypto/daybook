@@ -1,6 +1,7 @@
 import { AGENTS, EVENTS } from "./data.js";
 import {
   agentMeta,
+  buildCollab,
   buildDailyProjection,
   buildDailyReport,
   buildDryRunSyncPlan,
@@ -35,6 +36,7 @@ const state = {
   dateOffset: 0,
   publishTarget: null,
   summarizer: prefs.summarizer,
+  view: prefs.view,
   openAgents: new Set(),
   reportGen: false,
   events: mergeEvents(EVENTS, loadedLocalJournal.events),
@@ -59,7 +61,7 @@ function pickDefaultDate(imported) {
 }
 
 function loadPrefs() {
-  const fallback = { lang: "zh", theme: "light", leftOpen: true, rightOpen: false, summarizer: "claude_code" };
+  const fallback = { lang: "zh", theme: "light", rightOpen: false, summarizer: "claude_code", view: "report" };
   if (typeof localStorage === "undefined") return fallback;
   try {
     return { ...fallback, ...JSON.parse(localStorage.getItem(PREFS_KEY) || "{}") };
@@ -71,7 +73,7 @@ function loadPrefs() {
 function persistPrefs() {
   try {
     localStorage.setItem(PREFS_KEY, JSON.stringify({
-      lang: state.lang, theme: state.theme, rightOpen: state.rightOpen, summarizer: state.summarizer
+      lang: state.lang, theme: state.theme, rightOpen: state.rightOpen, summarizer: state.summarizer, view: state.view
     }));
   } catch { /* ignore */ }
 }
@@ -104,7 +106,11 @@ const I18N = {
     copied: "已复制", risksLabel: "风险 / 待解决", noReport: "今天还没有可成报的真实活动。", coworkWord: "处协作",
     allAgents: "全部", wWins: "完成", wLearnings: "学到", wRisks: "风险 / 冲突", wNext: "下一步",
     mechDraft: "机械草稿 · 未经 LLM 概括", mechDraftHint: "v1 离线为机械抽取；点「生成」让选定 agent 真正概括（dry-run）",
-    summarizer: "摘要器", generate: "生成", expandRaw: "展开原话 ▾", collapseRaw: "收起原话 ▴"
+    summarizer: "摘要器", generate: "生成", expandRaw: "展开原话 ▾", collapseRaw: "收起原话 ▴",
+    viewReport: "日报", viewCollab: "协作",
+    collabCap: "今日协作", collabHeading: "今天谁在推进什么",
+    convergeWith: "交汇于", convergeHeading: "同台项目", noCollab: "今天没有可视化的真实活动。",
+    collabHint: "只读复盘：行=agent，横轴=真实时间，色块=会话（按项目着色）；同色跨行=同一项目上的交汇。", sessionsUnit: "会话"
   },
   en: {
     tagline: "Multi-agent nightly work journal", dailyReview: "Daily review · Shanghai",
@@ -131,7 +137,11 @@ const I18N = {
     copied: "Copied", risksLabel: "Risks / blockers", noReport: "No real activity to report yet today.", coworkWord: "co-work",
     allAgents: "All", wWins: "Wins", wLearnings: "Learnings", wRisks: "Risks / conflicts", wNext: "Next actions",
     mechDraft: "Mechanical draft · not LLM-summarized", mechDraftHint: "v1 offline = extractive; click Generate to have the chosen agent summarize (dry-run)",
-    summarizer: "Summarizer", generate: "Generate", expandRaw: "Show raw ▾", collapseRaw: "Hide raw ▴"
+    summarizer: "Summarizer", generate: "Generate", expandRaw: "Show raw ▾", collapseRaw: "Hide raw ▴",
+    viewReport: "Report", viewCollab: "Collab",
+    collabCap: "Today's collaboration", collabHeading: "Who advanced what today",
+    convergeWith: "converges with", convergeHeading: "Shared projects", noCollab: "No real activity to visualize today.",
+    collabHint: "Read-only review: rows = agents, x = real time, blocks = sessions (colored by project); same color across rows = they met on that project.", sessionsUnit: "sessions"
   }
 };
 const STANCE_I18N = {
@@ -275,11 +285,15 @@ function render() {
       <div class="shell">
         <main class="workspace">
           ${renderDailyHeader(daily)}
-          ${renderDailyReport(buildDailyReport(state.selectedDate, state.events))}
-          ${renderThreads(daily)}
-          <section class="agent-grid" aria-label="agents">
-            ${daily.agents.map((agent) => renderAgentColumn(agent, daily)).join("")}
-          </section>
+          ${state.view === "collab"
+            ? renderCollab(buildCollab(state.selectedDate, state.events))
+            : `
+              ${renderDailyReport(buildDailyReport(state.selectedDate, state.events))}
+              ${renderThreads(daily)}
+              <section class="agent-grid" aria-label="agents">
+                ${daily.agents.map((agent) => renderAgentColumn(agent, daily)).join("")}
+              </section>
+            `}
         </main>
         <aside class="right-panel" aria-label="evidence drawer">
           ${renderRightPanel(daily, weekly)}
@@ -361,6 +375,10 @@ function renderTopbar(daily) {
         <button class="icon-button" data-action="next-week" title="${t("nextDay")}" ${offset <= 0 ? "disabled" : ""}>›</button>
       </div>
       <div class="topbar-right">
+        <div class="segmented view-toggle">
+          <button class="${state.view === "report" ? "active" : ""}" data-view="report">${t("viewReport")}</button>
+          <button class="${state.view === "collab" ? "active" : ""}" data-view="collab">${t("viewCollab")}</button>
+        </div>
         <button class="icon-button ${state.rightOpen ? "on" : ""}" data-action="toggle-right" title="${t("toggleRight")}">${rightPanelIcon()}</button>
       </div>
     </header>
@@ -557,6 +575,53 @@ function renderThreads(daily) {
           `).join("")}
         </div>
       ` : `<div class="empty">${t("threadsEmpty")}</div>`}
+    </section>
+  `;
+}
+
+function renderCollab(collab) {
+  if (!collab.lanes.length) return `<section class="collab"><div class="empty">${t("noCollab")}</div></section>`;
+  const span = Math.max(60, collab.axisEnd - collab.axisStart);
+  const xpct = (min) => ((min - collab.axisStart) / span) * 100;
+  const ticks = [];
+  for (let m = collab.axisStart; m <= collab.axisEnd; m += 120) ticks.push(m);
+  return `
+    <section class="collab">
+      <div class="panel-heading">
+        <div><p class="small-caps">${t("collabCap")}</p><h3>${t("collabHeading")}</h3></div>
+      </div>
+      <div class="collab-cards">
+        ${collab.cards.map((c) => `
+          <div class="collab-card" style="--accent:${c.accent}">
+            <div class="collab-card-top"><span class="agent-dot"></span><strong>${escapeHtml(c.name)}</strong></div>
+            <div class="collab-card-stat">${c.count} ${t("sessionsUnit")} · ${c.projectCount} ${t("diaryProjects")}</div>
+            ${c.convergeWith.length ? `<div class="collab-card-conv">${t("convergeWith")} ${c.convergeWith.map(escapeHtml).join("、")}</div>` : ""}
+          </div>
+        `).join("")}
+      </div>
+      <div class="swimlane">
+        <div class="swim-axis">${ticks.map((m) => `<span style="left:${xpct(m)}%">${String(Math.floor(m / 60)).padStart(2, "0")}:00</span>`).join("")}</div>
+        ${collab.lanes.map((lane) => {
+          let last = -Infinity;
+          const GAP = 2.2;
+          const chips = lane.chips.map((c) => {
+            let x = xpct(c.minutes);
+            if (x - last < GAP) x = last + GAP;
+            last = x;
+            x = Math.min(x, 99);
+            const tip = `${c.time} · ${c.project}${c.summary ? " — " + clip(stripCount(c.summary), 80) : ""}`;
+            return `<button class="swim-chip ${c.converge ? "converge" : ""}" style="left:${x}%; --c:${c.color}" title="${escapeHtml(tip)}"></button>`;
+          }).join("");
+          return `<div class="swim-row"><div class="swim-label" style="--accent:${lane.accent}"><strong>${escapeHtml(lane.name)}</strong><span>${lane.count}</span></div><div class="swim-track">${chips}</div></div>`;
+        }).join("")}
+      </div>
+      <div class="collab-legend">${collab.legend.map((l) => `<span class="leg"><i style="background:${l.color}"></i>${escapeHtml(l.name)}</span>`).join("")}</div>
+      ${collab.convergence.length ? `
+        <div class="collab-converge">
+          <h4>${t("convergeHeading")}</h4>
+          <ul>${collab.convergence.map((c) => `<li><i style="background:${c.color}"></i><b>${escapeHtml(c.project)}</b>：${c.agents.map(escapeHtml).join("、")}</li>`).join("")}</ul>
+        </div>` : ""}
+      <p class="collab-hint">${t("collabHint")}</p>
     </section>
   `;
 }
@@ -912,6 +977,14 @@ function bindEvents() {
   document.querySelectorAll("[data-summarizer]").forEach((button) => {
     button.addEventListener("click", () => {
       state.summarizer = button.dataset.summarizer;
+      persistPrefs();
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-view]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.view = button.dataset.view;
       persistPrefs();
       render();
     });
