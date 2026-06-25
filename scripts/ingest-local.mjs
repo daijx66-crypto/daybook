@@ -34,6 +34,22 @@ function mtimeDate(path) {
   return statSync(path).mtime.toISOString().slice(0, 10);
 }
 
+// Convert a UTC timestamp (or a file mtime) to a real Asia/Shanghai {date, time}.
+// Codex/Claude store UTC; naively appending +08:00 would mis-bucket near midnight.
+function localStamp(ts, fallbackPath) {
+  let d = null;
+  if (ts) { const x = new Date(ts); if (!isNaN(x.getTime())) d = x; }
+  if (!d && fallbackPath) { try { d = statSync(fallbackPath).mtime; } catch { /* none */ } }
+  if (!d) return null;
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hour12: false
+  }).formatToParts(d);
+  const get = (type) => (parts.find((p) => p.type === type) || {}).value;
+  let hh = get("hour"); if (hh === "24") hh = "00";
+  return { date: `${get("year")}-${get("month")}-${get("day")}`, time: `${hh}:${get("minute")}` };
+}
+
 let redactedHits = 0;
 function redact(text) {
   if (!text) return "";
@@ -181,76 +197,70 @@ function pushEvent({ id, date, agent, type, time, title, summary, project, tags,
   });
 }
 
+// Emit ONE event per session (real time), so the swimlane has real chips and the
+// report can aggregate honestly. agent: "claude_code" | "codex".
+function ingestSessions(agent, files) {
+  let n = 0;
+  for (const { path: p, projHint } of files) {
+    let stamp, project, title;
+    try {
+      const head = readHead(p);
+      const { ts, cwd } = scanMeta(head);
+      stamp = localStamp(ts, p);
+      if (!stamp) continue;
+      const raw = cwd ? basename(cwd) : (projHint || agent);
+      project = foldProject(raw);
+      title = firstUserText(head);
+    } catch { continue; }
+    const sec = /\[REDACTED/.test(clean(title || "", 90));
+    pushEvent({
+      id: `${agent === "codex" ? "cx" : "cc"}-${stamp.date}-${stamp.time.replace(":", "")}-${slug(project)}`,
+      date: stamp.date,
+      agent,
+      type: classifyType(title),
+      time: stamp.time,
+      title: project,
+      summary: ((project !== FOLD_LABEL && title) ? clean(title, 200) : "") || project,
+      project, tags: [agent === "codex" ? "codex" : "claude-code", "real"], secret: sec, sessionCount: 1
+    });
+    n++;
+  }
+  return n;
+}
+
 // ---------- 1. Claude Code ----------
 function ingestClaude() {
   const base = join(HOME, ".claude", "projects");
   if (!existsSync(base)) return 0;
-  const agg = new Map();
+  const files = [];
   for (const proj of readdirSync(base)) {
     const dir = join(base, proj);
-    let files;
-    try { files = readdirSync(dir).filter((f) => f.endsWith(".jsonl")); } catch { continue; }
-    for (const f of files) {
-      const p = join(dir, f);
-      let date, project, title;
-      try {
-        const head = readHead(p);
-        const { ts, cwd } = scanMeta(head);
-        date = (ts && ts.slice(0, 10)) || mtimeDate(p);
-        project = cwd ? basename(cwd) : proj.replace(/^-+/, "").split("-").filter(Boolean).slice(-1)[0] || proj;
-        title = firstUserText(head);
-      } catch { continue; }
-      addSession(agg, date, foldProject(project), title);
-    }
+    const projHint = proj.replace(/^-+/, "").split("-").filter(Boolean).slice(-1)[0] || proj;
+    try {
+      for (const f of readdirSync(dir)) {
+        if (f.endsWith(".jsonl")) files.push({ path: join(dir, f), projHint });
+      }
+    } catch { continue; }
   }
-  for (const { date, project, count, samples } of agg.values()) {
-    const sec = samples.some((s) => /\[REDACTED/.test(clean(s, 90)));
-    pushEvent({
-      id: `cc-${date}-${slug(project)}`,
-      date, agent: "claude_code", type: classifyType(samples.join(" ")), time: "21:30",
-      title: project,
-      summary: `${count} 个 Claude Code 会话` + (project !== FOLD_LABEL && samples.length ? `：${samples.map((s) => clean(s, 70)).join("；")}` : ""),
-      project, tags: ["claude-code", "real"], secret: sec, sessionCount: count
-    });
-  }
-  return agg.size;
+  return ingestSessions("claude_code", files);
 }
 
 // ---------- 2. Codex ----------
 function ingestCodex() {
   const base = join(HOME, ".codex", "sessions");
   if (!existsSync(base)) return 0;
-  const agg = new Map();
+  const files = [];
   const walk = (dir) => {
     let entries;
     try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
     for (const ent of entries) {
       const p = join(dir, ent.name);
       if (ent.isDirectory()) walk(p);
-      else if (ent.name.endsWith(".jsonl")) {
-        let date, project, title;
-        try {
-          const head = readHead(p);
-          const { ts, cwd } = scanMeta(head);
-          date = (ts && ts.slice(0, 10)) || mtimeDate(p);
-          project = cwd ? basename(cwd) : "codex";
-          title = firstUserText(head);
-        } catch { continue; }
-        addSession(agg, date, foldProject(project), title);
-      }
+      else if (ent.name.endsWith(".jsonl")) files.push({ path: p, projHint: "codex" });
     }
   };
   walk(base);
-  for (const { date, project, count, samples } of agg.values()) {
-    pushEvent({
-      id: `cx-${date}-${slug(project)}`,
-      date, agent: "codex", type: classifyType(samples.join(" ")), time: "21:00",
-      title: project,
-      summary: `${count} 个 Codex 会话` + (project !== FOLD_LABEL && samples.length ? `：${samples.map((s) => clean(s, 70)).join("；")}` : ""),
-      project, tags: ["codex", "real"], sessionCount: count
-    });
-  }
-  return agg.size;
+  return ingestSessions("codex", files);
 }
 
 // ---------- 3. Hermes ----------
@@ -280,9 +290,10 @@ function ingestHermes() {
     } catch { /* keep empty */ }
     const titleFromFile = f.replace(/\.md$/, "").replace(/_/g, " ");
     const type = /HANDOFF/i.test(f) ? "handoff" : /DECISION/i.test(f) ? "decision" : /TODO|ROADMAP|GOAL/i.test(f) ? "suggestion" : /REPORT|AUDIT|DIAGNOSIS/i.test(f) ? "artifact" : "task_update";
+    const time = (localStamp(null, p) || { time: "22:00" }).time;
     pushEvent({
       id: `hm-${date}-${slug(titleFromFile)}`,
-      date, agent: "hermes", type, time: "22:00",
+      date, agent: "hermes", type, time,
       title: titleFromFile,
       summary: firstPara || titleFromFile,
       project: "hermes", tags: ["hermes", "real"]

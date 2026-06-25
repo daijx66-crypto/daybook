@@ -62,26 +62,36 @@ function agentProjection(agentId, dayEvents) {
     tomorrow: [],
     blockers: [],
     projects: [],
+    projectBreakdown: [],
     sessionCount: 0,
     sourceIds: [],
     events: ownEvents.map((event) => event.eventId)
   };
 
+  const byProject = new Map();
   ownEvents.forEach((event) => {
     const bucket = classify(event);
     const line = event.payload.summary;
-    if (bucket === "done") pushLimited(projection.done, line);
-    if (bucket === "learned") pushLimited(projection.learned, line);
-    if (bucket === "tomorrow") pushLimited(projection.tomorrow, line);
-    if (bucket === "blockers") pushLimited(projection.blockers, line);
+    const realLine = line && line !== "后台 / 杂项"; // skip folded-bucket placeholder noise
+    if (realLine && bucket === "done") pushLimited(projection.done, line);
+    if (realLine && bucket === "learned") pushLimited(projection.learned, line);
+    if (realLine && bucket === "tomorrow") pushLimited(projection.tomorrow, line);
+    if (realLine && bucket === "blockers") pushLimited(projection.blockers, line);
     const proj = event.payload.project;
     if (proj && proj !== "后台 / 杂项") {
       pushLimited(projection.projects, proj);
       projection.sessionCount += event.payload.sessionCount || 1;
+      if (!byProject.has(proj)) byProject.set(proj, { project: proj, count: 0, samples: [], blocker: false });
+      const g = byProject.get(proj);
+      g.count += event.payload.sessionCount || 1;
+      if (line && g.samples.length < 3 && !g.samples.includes(line)) g.samples.push(line);
+      if (bucket === "blockers") g.blocker = true;
     }
     event.sourceIds.forEach((sourceId) => pushLimited(projection.sourceIds, sourceId));
   });
 
+  // Per-project breakdown (real projects only), busiest first — the report skeleton.
+  projection.projectBreakdown = [...byProject.values()].sort((a, b) => b.count - a.count);
   // No fake placeholders — an empty agent is rendered honestly by the view (i18n).
   return projection;
 }
@@ -302,9 +312,9 @@ export function buildDailyReport(date, sourceEvents = EVENTS) {
   const dayEvents = eventsForDate(date, sourceEvents);
   const projectsSet = new Set(dayEvents.map((e) => e.payload.project).filter((p) => p && p !== "后台 / 杂项"));
   const sessionTotal = dayEvents.reduce((sum, e) => sum + (e.payload.sessionCount || 1), 0);
-  // Overview = the most substantive lines across all agents (longest = most signal).
-  const pool = daily.agents.flatMap((a) => [...a.done, ...a.learned].map((text) => ({ agent: a.name, agentId: a.agentId, accent: a.accent, text })));
-  const overview = pool.sort((x, y) => y.text.length - x.text.length).slice(0, 5);
+  // Per-agent sections (active agents only) — each carries its projectBreakdown so
+  // the view can write a real "what they did" skeleton instead of pasting raw text.
+  const sections = daily.agents.filter((a) => a.sessionCount > 0 || a.done.length || a.learned.length);
   return {
     date,
     title: daily.title,
@@ -312,7 +322,8 @@ export function buildDailyReport(date, sourceEvents = EVENTS) {
     projectCount: projectsSet.size,
     agentCount: new Set(dayEvents.map((e) => e.sourceAgent)).size,
     sessionTotal,
-    overview,
+    summarySource: "mechanical", // v2 LLM summary swaps this to "llm"; same slot, just a badge change
+    sections,
     byAgent: daily.agents,
     threads: daily.threads,
     tomorrow: daily.agents.flatMap((a) => a.tomorrow),

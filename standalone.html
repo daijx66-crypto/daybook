@@ -1699,6 +1699,41 @@ body, .app-root { transition: background-color 0.25s ease, color 0.25s ease; }
   .topbar-brand .brand-text p { display: none; }
   .topbar-dates { order: 3; width: 100%; overflow-x: auto; }
 }
+
+/* ============================================================
+   Daily report v2 — per-agent summary sections + summarizer
+   ============================================================ */
+.report-head-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 18px 22px 6px; flex-wrap: wrap; }
+.report-head-text { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.report-head-text h3 { margin: 0; font-size: 20px; }
+.report-badge {
+  font-size: 11px; font-weight: 600; color: var(--warning);
+  padding: 2px 8px; border-radius: 999px;
+  background: color-mix(in srgb, var(--warning), transparent 88%);
+  border: 1px solid color-mix(in srgb, var(--warning), transparent 70%);
+}
+.report-author { display: flex; align-items: center; gap: 8px; }
+.report-author-label { font-size: 12px; color: var(--muted); }
+.summarizer { width: auto; margin: 0; }
+.summarizer button { font-size: 12px; padding: 0 10px; }
+
+.report-sections { display: grid; gap: 14px; padding: 12px 22px 4px; }
+.report-section { border-left: 3px solid var(--accent); padding: 2px 0 2px 14px; }
+.report-section-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.agent-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); flex: none; }
+.report-section-head strong { font-size: 15px; color: var(--accent); }
+.report-section-metric { margin-left: auto; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.report-skel { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.report-skel li { font-size: 13.5px; line-height: 1.5; color: var(--ink); }
+.report-skel li b { color: var(--accent); }
+.report-skel li.blk b { color: var(--danger); }
+.report-raw-toggle { margin-top: 6px; border: 0; background: transparent; color: var(--muted); font-size: 12px; padding: 2px 0; }
+.report-raw-toggle:hover { color: var(--ink); }
+.report-raw { margin: 6px 0 0; padding-left: 16px; display: grid; gap: 4px; font-size: 12.5px; line-height: 1.5; color: var(--muted); }
+.report-footer { border-top: 1px solid var(--line); margin-top: 12px; padding: 16px 22px; display: grid; gap: 14px; }
+.report-gen { margin: 8px 22px 0; }
+
+.thread-sentence { margin: 0 0 10px; font-size: 13px; color: var(--muted); }
 </style>
   </head>
   <body>
@@ -2292,26 +2327,36 @@ function agentProjection(agentId, dayEvents) {
     tomorrow: [],
     blockers: [],
     projects: [],
+    projectBreakdown: [],
     sessionCount: 0,
     sourceIds: [],
     events: ownEvents.map((event) => event.eventId)
   };
 
+  const byProject = new Map();
   ownEvents.forEach((event) => {
     const bucket = classify(event);
     const line = event.payload.summary;
-    if (bucket === "done") pushLimited(projection.done, line);
-    if (bucket === "learned") pushLimited(projection.learned, line);
-    if (bucket === "tomorrow") pushLimited(projection.tomorrow, line);
-    if (bucket === "blockers") pushLimited(projection.blockers, line);
+    const realLine = line && line !== "后台 / 杂项"; // skip folded-bucket placeholder noise
+    if (realLine && bucket === "done") pushLimited(projection.done, line);
+    if (realLine && bucket === "learned") pushLimited(projection.learned, line);
+    if (realLine && bucket === "tomorrow") pushLimited(projection.tomorrow, line);
+    if (realLine && bucket === "blockers") pushLimited(projection.blockers, line);
     const proj = event.payload.project;
     if (proj && proj !== "后台 / 杂项") {
       pushLimited(projection.projects, proj);
       projection.sessionCount += event.payload.sessionCount || 1;
+      if (!byProject.has(proj)) byProject.set(proj, { project: proj, count: 0, samples: [], blocker: false });
+      const g = byProject.get(proj);
+      g.count += event.payload.sessionCount || 1;
+      if (line && g.samples.length < 3 && !g.samples.includes(line)) g.samples.push(line);
+      if (bucket === "blockers") g.blocker = true;
     }
     event.sourceIds.forEach((sourceId) => pushLimited(projection.sourceIds, sourceId));
   });
 
+  // Per-project breakdown (real projects only), busiest first — the report skeleton.
+  projection.projectBreakdown = [...byProject.values()].sort((a, b) => b.count - a.count);
   // No fake placeholders — an empty agent is rendered honestly by the view (i18n).
   return projection;
 }
@@ -2532,9 +2577,9 @@ function buildDailyReport(date, sourceEvents = EVENTS) {
   const dayEvents = eventsForDate(date, sourceEvents);
   const projectsSet = new Set(dayEvents.map((e) => e.payload.project).filter((p) => p && p !== "后台 / 杂项"));
   const sessionTotal = dayEvents.reduce((sum, e) => sum + (e.payload.sessionCount || 1), 0);
-  // Overview = the most substantive lines across all agents (longest = most signal).
-  const pool = daily.agents.flatMap((a) => [...a.done, ...a.learned].map((text) => ({ agent: a.name, agentId: a.agentId, accent: a.accent, text })));
-  const overview = pool.sort((x, y) => y.text.length - x.text.length).slice(0, 5);
+  // Per-agent sections (active agents only) — each carries its projectBreakdown so
+  // the view can write a real "what they did" skeleton instead of pasting raw text.
+  const sections = daily.agents.filter((a) => a.sessionCount > 0 || a.done.length || a.learned.length);
   return {
     date,
     title: daily.title,
@@ -2542,7 +2587,8 @@ function buildDailyReport(date, sourceEvents = EVENTS) {
     projectCount: projectsSet.size,
     agentCount: new Set(dayEvents.map((e) => e.sourceAgent)).size,
     sessionTotal,
-    overview,
+    summarySource: "mechanical", // v2 LLM summary swaps this to "llm"; same slot, just a badge change
+    sections,
     byAgent: daily.agents,
     threads: daily.threads,
     tomorrow: daily.agents.flatMap((a) => a.tomorrow),
@@ -2649,8 +2695,10 @@ const state = {
   theme: prefs.theme,
   rightOpen: prefs.rightOpen,
   dateOffset: 0,
-  reportOpen: false,
   publishTarget: null,
+  summarizer: prefs.summarizer,
+  openAgents: new Set(),
+  reportGen: false,
   events: mergeEvents(EVENTS, loadedLocalJournal.events),
   dateList: []
 };
@@ -2673,7 +2721,7 @@ function pickDefaultDate(imported) {
 }
 
 function loadPrefs() {
-  const fallback = { lang: "zh", theme: "light", leftOpen: true, rightOpen: false };
+  const fallback = { lang: "zh", theme: "light", leftOpen: true, rightOpen: false, summarizer: "claude_code" };
   if (typeof localStorage === "undefined") return fallback;
   try {
     return { ...fallback, ...JSON.parse(localStorage.getItem(PREFS_KEY) || "{}") };
@@ -2685,7 +2733,7 @@ function loadPrefs() {
 function persistPrefs() {
   try {
     localStorage.setItem(PREFS_KEY, JSON.stringify({
-      lang: state.lang, theme: state.theme, leftOpen: state.leftOpen, rightOpen: state.rightOpen
+      lang: state.lang, theme: state.theme, rightOpen: state.rightOpen, summarizer: state.summarizer
     }));
   } catch { /* ignore */ }
 }
@@ -2716,7 +2764,9 @@ const I18N = {
     overview: "今日总览", publish: "推送预览", copyMd: "复制 Markdown", sendTo: "发给",
     dryRunNote: "v1 仅 dry-run / 复制：不真实发送、不写飞书、不读密钥、不建定时任务。",
     copied: "已复制", risksLabel: "风险 / 待解决", noReport: "今天还没有可成报的真实活动。", coworkWord: "处协作",
-    allAgents: "全部", wWins: "完成", wLearnings: "学到", wRisks: "风险 / 冲突", wNext: "下一步"
+    allAgents: "全部", wWins: "完成", wLearnings: "学到", wRisks: "风险 / 冲突", wNext: "下一步",
+    mechDraft: "机械草稿 · 未经 LLM 概括", mechDraftHint: "v1 离线为机械抽取；点「生成」让选定 agent 真正概括（dry-run）",
+    summarizer: "摘要器", generate: "生成", expandRaw: "展开原话 ▾", collapseRaw: "收起原话 ▴"
   },
   en: {
     tagline: "Multi-agent nightly work journal", dailyReview: "Daily review · Shanghai",
@@ -2741,7 +2791,9 @@ const I18N = {
     overview: "Overview", publish: "Publish", copyMd: "Copy Markdown", sendTo: "Send to",
     dryRunNote: "v1 is dry-run / copy only: no real send, no Feishu writes, no secrets, no cron.",
     copied: "Copied", risksLabel: "Risks / blockers", noReport: "No real activity to report yet today.", coworkWord: "co-work",
-    allAgents: "All", wWins: "Wins", wLearnings: "Learnings", wRisks: "Risks / conflicts", wNext: "Next actions"
+    allAgents: "All", wWins: "Wins", wLearnings: "Learnings", wRisks: "Risks / conflicts", wNext: "Next actions",
+    mechDraft: "Mechanical draft · not LLM-summarized", mechDraftHint: "v1 offline = extractive; click Generate to have the chosen agent summarize (dry-run)",
+    summarizer: "Summarizer", generate: "Generate", expandRaw: "Show raw ▾", collapseRaw: "Hide raw ▴"
   }
 };
 const STANCE_I18N = {
@@ -3015,21 +3067,31 @@ function composeDiary(agent) {
   return `${ctx}${body}`.trim();
 }
 
+function threadSentence(thread) {
+  const names = [...new Set(thread.nodes.map((n) => n.name))];
+  const who = state.lang === "zh" ? names.join("、") : names.join(" & ");
+  const flag = thread.hasDisagreement ? `（${t("flagDisagree")}）` : "";
+  return state.lang === "zh"
+    ? `${thread.topic}：${who} 一起推进${flag}`
+    : `${thread.topic}: ${who} worked together${flag}`;
+}
+
 function reportMarkdown(report) {
   const lines = [`# ${t("reportTitle")} — ${report.title}`, ""];
-  if (report.overview.length) {
-    lines.push(`## ${t("overview")}`);
-    report.overview.forEach((o) => lines.push(`- **${o.agent}**: ${o.text}`));
-    lines.push("");
-  }
-  report.byAgent.forEach((a) => {
-    if (!a.done.length && !a.learned.length && !a.tomorrow.length) return;
-    lines.push(`## ${a.name}`);
-    a.done.slice(0, 4).forEach((x) => lines.push(`- ${x}`));
+  report.sections.forEach((a) => {
+    lines.push(`## ${a.name} · ${a.projects.length} ${t("diaryProjects")} / ${a.sessionCount} ${t("diarySessions")}`);
+    a.projectBreakdown.slice(0, 6).forEach((b) => {
+      lines.push(`- ${b.blocker ? "⚠️ " : ""}**${b.project}**${b.samples[0] ? ": " + stripCount(b.samples[0]) : ""}`);
+    });
     a.tomorrow.slice(0, 3).forEach((x) => lines.push(`- (${t("tomorrowLabel")}) ${x}`));
     lines.push("");
   });
-  lines.push(`_generated by daybook · ${report.eventCount} events · dry-run_`);
+  if (report.threads.length) {
+    lines.push(`## ${t("threadsCap")}`);
+    report.threads.forEach((th) => lines.push(`- ${threadSentence(th)}`));
+    lines.push("");
+  }
+  lines.push(`_generated by daybook · ${report.eventCount} events · ${t("mechDraft")}_`);
   return lines.join("\n");
 }
 
@@ -3045,54 +3107,63 @@ function publishContent(target, report) {
   return `# dry-run command (NOT executed)\n${cmds[target] || target}\n\n# daybook-report-${report.date}.md\n${md}`;
 }
 
-function renderDailyReport(report) {
-  const hasContent = report.overview.length > 0;
+function renderReportSection(sec) {
+  const open = state.openAgents.has(sec.agentId);
+  const breakdown = sec.projectBreakdown.slice(0, 5);
+  const raw = [...sec.done, ...sec.learned, ...sec.tomorrow];
   return `
-    <section class="report ${state.reportOpen ? "open" : ""}">
-      <button class="report-head" data-action="toggle-report">
-        <div class="report-head-text">
-          <p class="small-caps">${t("reportCap")}</p>
-          <h3>${t("reportTitle")}</h3>
-        </div>
-        <div class="report-meta">
-          <span>${report.eventCount} ${t("metricReal")}</span>
-          ${report.coworks ? `<span>${report.coworks} ${t("coworkWord")}</span>` : ""}
-          ${report.disagreements ? `<span class="hot">${report.disagreements} ${t("flagDisagree")}</span>` : ""}
-          <span class="chevron">${state.reportOpen ? t("collapse") : t("expand")}</span>
-        </div>
-      </button>
-      ${hasContent
-        ? `<ol class="report-overview">${report.overview.map((o) => `<li style="--accent:${o.accent}"><b>${escapeHtml(o.agent)}</b> ${escapeHtml(clip(o.text, 112))}</li>`).join("")}</ol>`
-        : `<p class="report-empty">${t("noReport")}</p>`}
-      ${state.reportOpen ? renderReportBody(report) : ""}
-    </section>
+    <div class="report-section" style="--accent:${sec.accent}">
+      <div class="report-section-head">
+        <span class="agent-dot"></span>
+        <strong>${escapeHtml(sec.name)}</strong>
+        <span class="report-section-metric">${sec.projects.length} ${t("diaryProjects")} · ${sec.sessionCount} ${t("diarySessions")}</span>
+      </div>
+      ${breakdown.length
+        ? `<ul class="report-skel">${breakdown.map((b) => `<li class="${b.blocker ? "blk" : ""}">${b.blocker ? "⚠️ " : ""}<b>${escapeHtml(b.project)}</b>${b.samples[0] ? "：" + escapeHtml(clip(stripCount(b.samples[0]), 84)) : ""}</li>`).join("")}</ul>`
+        : `<p class="muted">${t("noActivity")}</p>`}
+      ${raw.length ? `<button class="report-raw-toggle" data-toggle-agent="${sec.agentId}">${open ? t("collapseRaw") : t("expandRaw")}</button>${open ? `<ul class="report-raw">${raw.slice(0, 10).map((x) => `<li>${escapeHtml(clip(stripCount(x), 160))}</li>`).join("")}</ul>` : ""}` : ""}
+    </div>
   `;
 }
 
-function renderReportBody(report) {
-  const list = (items) => items.length
-    ? `<ul>${items.slice(0, 5).map((i) => `<li>${escapeHtml(clip(i, 120))}</li>`).join("")}</ul>`
-    : `<p class="muted">—</p>`;
-  const targetLabel = (tg) => tg === "feishu" ? "Feishu" : (AGENTS[tg] ? AGENTS[tg].name : tg);
+function renderDailyReport(report) {
+  const hasContent = report.sections.length > 0;
+  const summarizers = ["claude_code", "codex", "hermes"];
+  const list = (items) => `<ul>${items.slice(0, 5).map((i) => `<li>${escapeHtml(clip(stripCount(i), 120))}</li>`).join("")}</ul>`;
   return `
-    <div class="report-body">
-      ${report.tomorrow.length ? `<div class="report-block"><h4>${t("tomorrowLabel")}</h4>${list(report.tomorrow)}</div>` : ""}
-      ${report.risks.length ? `<div class="report-block"><h4>${t("risksLabel")}</h4>${list(report.risks)}</div>` : ""}
-      <div class="report-publish">
-        <h4>${t("publish")}</h4>
-        <div class="publish-row">
-          <button class="secondary compact ${state.publishTarget === "markdown" ? "active" : ""}" data-publish="markdown">${t("copyMd")}</button>
-          ${["codex", "claude_code", "hermes", "feishu"].map((tg) => `<button class="secondary compact ${state.publishTarget === tg ? "active" : ""}" data-publish="${tg}">${t("sendTo")} ${targetLabel(tg)}</button>`).join("")}
+    <section class="report">
+      <div class="report-head-row">
+        <div class="report-head-text">
+          <p class="small-caps">${t("reportCap")}</p>
+          <h3>${t("reportTitle")}</h3>
+          <span class="report-badge" title="${t("mechDraftHint")}">${t("mechDraft")}</span>
         </div>
-        <p class="dry-note">${t("dryRunNote")}</p>
-        ${state.publishTarget ? `
-          <div class="publish-preview">
-            <pre>${escapeHtml(publishContent(state.publishTarget, report))}</pre>
-            <button class="primary compact" data-copy-publish="${state.publishTarget}">${t("copyMd")}</button>
+        <div class="report-author">
+          <span class="report-author-label">${t("summarizer")}</span>
+          <div class="segmented thin summarizer">
+            ${summarizers.map((s) => `<button class="${state.summarizer === s ? "active" : ""}" data-summarizer="${s}">${AGENTS[s].name}</button>`).join("")}
           </div>
-        ` : ""}
+          <button class="primary compact" data-action="gen-report">${t("generate")}</button>
+        </div>
       </div>
-    </div>`;
+      ${hasContent ? `<div class="report-sections">${report.sections.map(renderReportSection).join("")}</div>` : `<p class="report-empty">${t("noReport")}</p>`}
+      ${state.reportGen ? `
+        <div class="publish-preview report-gen">
+          <p class="dry-note">${t("dryRunNote")}</p>
+          <pre>${escapeHtml(publishContent(state.summarizer, report))}</pre>
+          <button class="primary compact" data-copy-publish="${state.summarizer}">${t("copyMd")}</button>
+        </div>` : ""}
+      <div class="report-footer">
+        ${report.tomorrow.length ? `<div class="report-block"><h4>${t("tomorrowLabel")}</h4>${list(report.tomorrow)}</div>` : ""}
+        ${report.risks.length ? `<div class="report-block"><h4>${t("risksLabel")}</h4>${list(report.risks)}</div>` : ""}
+        <div class="report-publish">
+          <button class="secondary compact ${state.publishTarget === "markdown" ? "active" : ""}" data-publish="markdown">${t("copyMd")}</button>
+          <button class="secondary compact ${state.publishTarget === "feishu" ? "active" : ""}" data-publish="feishu">Feishu dry-run</button>
+          ${(state.publishTarget === "markdown" || state.publishTarget === "feishu") ? `<div class="publish-preview"><pre>${escapeHtml(publishContent(state.publishTarget, report))}</pre><button class="primary compact" data-copy-publish="${state.publishTarget}">${t("copyMd")}</button></div>` : ""}
+        </div>
+      </div>
+    </section>
+  `;
 }
 
 function stanceBadge(stance) {
@@ -3131,6 +3202,7 @@ function renderThreads(daily) {
                   ${threadFlag(thread)}
                 </div>
               </header>
+              <p class="thread-sentence">${escapeHtml(threadSentence(thread))}</p>
               <ol class="thread-chain">
                 ${thread.nodes.map((node, index) => `
                   <li class="thread-node ${index === 0 ? "root" : "reply"}" style="--accent:${node.accent}">
@@ -3139,7 +3211,7 @@ function renderThreads(daily) {
                       ${index === 0 ? "" : stanceBadge(node.stance)}
                       <time>${node.time}</time>
                     </div>
-                    <p>${escapeHtml(node.summary)}</p>
+                    <p>${escapeHtml(clip(stripCount(node.summary), 92))}</p>
                   </li>
                 `).join("")}
               </ol>
@@ -3499,6 +3571,22 @@ function bindEvents() {
     });
   });
 
+  document.querySelectorAll("[data-summarizer]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.summarizer = button.dataset.summarizer;
+      persistPrefs();
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-toggle-agent]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const id = button.dataset.toggleAgent;
+      if (state.openAgents.has(id)) state.openAgents.delete(id); else state.openAgents.add(id);
+      render();
+    });
+  });
+
   document.querySelectorAll("[data-copy-publish]").forEach((button) => {
     button.addEventListener("click", () => {
       const report = buildDailyReport(state.selectedDate, state.events);
@@ -3569,7 +3657,7 @@ function handleAction(action) {
   if (action === "next-week") state.dateOffset = Math.max(0, state.dateOffset - 7);
   if (action === "open-dry-run") state.dryRunOpen = true;
   if (action === "close-dry-run") state.dryRunOpen = false;
-  if (action === "toggle-report") state.reportOpen = !state.reportOpen;
+  if (action === "gen-report") state.reportGen = !state.reportGen;
   if (action === "toggle-lang") { state.lang = state.lang === "zh" ? "en" : "zh"; persistPrefs(); }
   if (action === "toggle-theme") { state.theme = state.theme === "light" ? "dark" : "light"; persistPrefs(); }
   if (action === "toggle-right") { state.rightOpen = !state.rightOpen; persistPrefs(); }
