@@ -13,11 +13,13 @@ import {
 const app = document.querySelector("#app");
 const JOURNAL_STORAGE_KEY = "agent-sync-demo.local-events.v1";
 const LOCAL_IMPORT_FILE = "./data/events.local.jsonl";
+const PREFS_KEY = "daybook.prefs.v1";
 const loadedLocalJournal = loadLocalJournal();
+const prefs = loadPrefs();
 const state = {
   selectedDate: dates()[0].date,
   agentFilter: "all",
-  rightTab: "sources",
+  rightTab: "conversation",
   conversationFilter: "all",
   selectedSourceId: "src-feishu-doc-daily",
   selectedSafetyId: null,
@@ -26,9 +28,91 @@ const state = {
   search: "",
   storageStatus: loadedLocalJournal.status,
   importedCount: 0,
+  lang: prefs.lang,
+  theme: prefs.theme,
+  leftOpen: prefs.leftOpen,
+  rightOpen: prefs.rightOpen,
   events: mergeEvents(EVENTS, loadedLocalJournal.events),
   dateList: []
 };
+
+// Most recent real date that has a same-project ≥2-agent co-work thread.
+function pickDefaultDate(imported) {
+  const byDate = {};
+  imported.forEach((e) => {
+    const p = e.payload.project;
+    if (!p || p === "后台 / 杂项") return;
+    (byDate[e.date] ||= {});
+    (byDate[e.date][p] ||= new Set()).add(e.sourceAgent);
+  });
+  const allDates = [...new Set(imported.map((e) => e.date))].sort().reverse();
+  for (const d of allDates) {
+    const projs = byDate[d] || {};
+    if (Object.values(projs).some((set) => set.size >= 2)) return d;
+  }
+  return allDates[0];
+}
+
+function loadPrefs() {
+  const fallback = { lang: "zh", theme: "light", leftOpen: true, rightOpen: false };
+  if (typeof localStorage === "undefined") return fallback;
+  try {
+    return { ...fallback, ...JSON.parse(localStorage.getItem(PREFS_KEY) || "{}") };
+  } catch {
+    return fallback;
+  }
+}
+
+function persistPrefs() {
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({
+      lang: state.lang, theme: state.theme, leftOpen: state.leftOpen, rightOpen: state.rightOpen
+    }));
+  } catch { /* ignore */ }
+}
+
+// --- i18n: translate the UI chrome only; agent names, project names and the
+// real content stay untouched. ---
+const I18N = {
+  zh: {
+    tagline: "多 agent 夜间工作日志", dailyReview: "每日回顾 · 上海",
+    threadsCap: "跨 agent 交流", clash: "今天 agent 之间的交锋", cowork: "今天谁和谁在一起干活",
+    threadsEmpty: "今天三个 agent 没有在同一个项目上交集。各自的进展见下方。",
+    flagDisagree: "有分歧", flagCowork: "同台协作", flagAligned: "已对齐", thread: "条", threadsWord: "条交流",
+    done: "完成", learned: "学到", tomorrow: "明天", blockers: "待解决", sources: "来源",
+    composer: "写一条本地记录…", addNote: "添加本地记录",
+    dates: "日期", status: "本地状态", boundary: "边界",
+    boundaryText: "只读你本机的真实活动（gitignore，不进公开仓库）；不写真实飞书、不调外部 API、不读密钥。",
+    tabSources: "信息源", tabConversation: "对话流", tabWeekly: "周报", tabSafety: "安全",
+    metricReal: "真实事件", metricProjects: "今日项目", metricAgents: "活跃 agent",
+    prevDay: "前一天", nextDay: "后一天", toggleLeft: "折叠日期栏", toggleRight: "侧栏",
+    latest: "最新", imported: "已导入", real: "条真实", exportJson: "导出 JSON", today: "今天"
+  },
+  en: {
+    tagline: "Multi-agent nightly work journal", dailyReview: "Daily review · Shanghai",
+    threadsCap: "Cross-agent threads", clash: "Where they clashed today", cowork: "Who worked together today",
+    threadsEmpty: "No shared project across agents today. See each agent below.",
+    flagDisagree: "Disagreed", flagCowork: "Co-worked", flagAligned: "Aligned", thread: "", threadsWord: "threads",
+    done: "Done", learned: "Learned", tomorrow: "Tomorrow", blockers: "Needs attention", sources: "Sources",
+    composer: "Write a local note…", addNote: "Add local note",
+    dates: "Dates", status: "Local status", boundary: "Boundary",
+    boundaryText: "Reads only your real local activity (git-ignored, never public); no real Feishu, no external API, no secrets.",
+    tabSources: "Sources", tabConversation: "Conversation", tabWeekly: "Weekly", tabSafety: "Safety",
+    metricReal: "Real events", metricProjects: "Projects today", metricAgents: "Active agents",
+    prevDay: "Previous day", nextDay: "Next day", toggleLeft: "Toggle dates", toggleRight: "Side panel",
+    latest: "Latest", imported: "Imported", real: " real", exportJson: "Export JSON", today: "Today"
+  }
+};
+const STANCE_I18N = {
+  zh: { disagree: ["✗", "反驳"], agree: ["✓", "同意"], build: ["↗", "推进"], co_worked: ["⇄", "同台"], handoff: ["→", "接力"], open: ["•", "提出"] },
+  en: { disagree: ["✗", "Pushed back"], agree: ["✓", "Agreed"], build: ["↗", "Built on"], co_worked: ["⇄", "Co-worked"], handoff: ["→", "Handoff"], open: ["•", "Opened"] }
+};
+function t(key) {
+  return (I18N[state.lang] && I18N[state.lang][key]) || I18N.zh[key] || key;
+}
+function applyTheme() {
+  try { document.documentElement.setAttribute("data-theme", state.theme); } catch { /* ignore */ }
+}
 
 // Build the date rail from whatever events exist (seed + local import), newest first.
 function computeDateList(events) {
@@ -60,12 +144,15 @@ async function importLocalFile() {
       .filter(Boolean)
       .filter(isJournalEvent);
     if (!imported.length) return;
-    state.events = mergeEvents(state.events, imported);
+    // Local view is 100% REAL: drop the seed demo entirely, keep only imported
+    // real activity + any notes the user typed here. No fabricated data on screen.
+    const ownNotes = state.events.filter((event) => event.sourceInstance === "mock-ui");
+    state.events = mergeEvents(imported, ownNotes);
     state.importedCount = imported.length;
     state.dateList = computeDateList(state.events);
-    // Land on the most recent day that has REAL activity, not the seed demo day.
-    const mostRecentReal = [...new Set(imported.map((event) => event.date))].sort().reverse()[0];
-    state.selectedDate = mostRecentReal || state.dateList[0].date;
+    // Land on the most recent day that actually has a cross-agent co-work thread,
+    // so the first screen shows the soul; fall back to most recent real day.
+    state.selectedDate = pickDefaultDate(imported);
     render();
   } catch {
     /* file:// or no local file — expected for the standalone/public build */
@@ -144,26 +231,27 @@ function fmtDate(date) {
 }
 
 function render() {
+  applyTheme();
   const daily = buildDailyProjection(state.selectedDate, state.events);
   const weekly = buildWeeklyPreview(state.selectedDate, state.events);
   const plan = buildDryRunSyncPlan(state.selectedDate, state.events);
-  const visibleAgents = daily.agents.filter((agent) => state.agentFilter === "all" || state.agentFilter === agent.agentId);
 
   app.innerHTML = `
-    <div class="shell ${state.dryRunOpen ? "drawer-open" : ""}">
-      ${renderSidebar(daily)}
-      <main class="workspace">
-        ${renderTopbar(daily)}
-        ${renderDailyHeader(daily)}
-        ${renderThreads(daily)}
-        <section class="agent-grid ${visibleAgents.length === 1 ? "single-agent" : ""}" aria-label="三位 agent 同步">
-          ${visibleAgents.map((agent) => renderAgentColumn(agent, daily)).join("")}
-        </section>
-        ${renderTimeline(daily)}
-      </main>
-      <aside class="right-panel" aria-label="信息源与周报">
-        ${renderRightPanel(daily, weekly)}
-      </aside>
+    <div class="app-root ${state.leftOpen ? "" : "left-collapsed"} ${state.rightOpen ? "right-open" : "right-collapsed"} ${state.dryRunOpen ? "drawer-open" : ""}">
+      ${renderTopbar(daily)}
+      <div class="shell">
+        ${renderSidebar(daily)}
+        <main class="workspace">
+          ${renderDailyHeader(daily)}
+          ${renderThreads(daily)}
+          <section class="agent-grid" aria-label="agents">
+            ${daily.agents.map((agent) => renderAgentColumn(agent, daily)).join("")}
+          </section>
+        </main>
+        <aside class="right-panel" aria-label="side panel">
+          ${renderRightPanel(daily, weekly)}
+        </aside>
+      </div>
       ${state.dryRunOpen ? renderDryRunDrawer(plan) : ""}
     </div>
   `;
@@ -174,64 +262,62 @@ function render() {
 function renderSidebar(daily) {
   return `
     <aside class="sidebar">
-      <div class="brand">
-        <div class="brand-mark">db</div>
-        <div>
-          <h1>daybook</h1>
-          <p>夜谈台 · 多 agent 夜间工作日志</p>
-        </div>
-      </div>
       <div class="sidebar-section">
-        <div class="section-label">日期</div>
+        <div class="section-label">${t("dates")}</div>
         <div class="date-list">
           ${state.dateList.slice(0, 30).map((item) => `
             <button class="date-item ${item.date === state.selectedDate ? "active" : ""}" data-date="${item.date}">
               <span>${item.weekday}</span>
               <strong>${fmtDate(item.date)}</strong>
-              <em>${item.label}</em>
+              <em>${item.date === state.dateList[0].date ? t("latest") : ""}</em>
             </button>
           `).join("")}
         </div>
       </div>
       <div class="sidebar-section health-panel">
-        <div class="section-label">本地状态</div>
-        <div class="health-row"><span>Local store</span><strong>${daily.localStoreHealth === "healthy" ? "Healthy" : "Review"}</strong></div>
-        <div class="health-row"><span>Journal</span><strong>${state.events.length} events</strong></div>
-        <div class="health-row"><span>Local writes</span><strong>${localEvents().length}</strong></div>
-        <div class="health-row"><span>Persistence</span><strong>${storageLabel(state.storageStatus)}</strong></div>
-        <div class="health-row"><span>Imported (local)</span><strong>${state.importedCount ? `${state.importedCount} real` : "JSONL ready"}</strong></div>
-        <div class="health-row"><span>Feishu</span><strong>Dry-run only</strong></div>
+        <div class="section-label">${t("status")}</div>
+        <div class="health-row"><span>${t("imported")}</span><strong>${state.importedCount ? `${state.importedCount}${t("real")}` : "—"}</strong></div>
         <div class="health-row"><span>External calls</span><strong>0</strong></div>
-        <button class="secondary full-width" data-action="open-dry-run">Preview Feishu dry-run</button>
-        <button class="secondary full-width stack-gap" data-action="export-events">Export local JSON</button>
+        <button class="secondary full-width" data-action="export-events">${t("exportJson")}</button>
       </div>
       <div class="local-note">
-        <strong>边界</strong>
-        <p>第一版只用本地 mock / JSONL 数据，存浏览器 localStorage；不读密钥，不写真实飞书，不创建定时任务，不调用任何外部 API。</p>
+        <strong>${t("boundary")}</strong>
+        <p>${t("boundaryText")}</p>
       </div>
     </aside>
   `;
 }
 
 function renderTopbar(daily) {
+  const langLabel = state.lang === "zh" ? "中" : "EN";
+  const themeIcon = state.theme === "dark" ? "☾" : "☀";
+  const weekdayLong = new Intl.DateTimeFormat(state.lang === "zh" ? "zh-CN" : "en-US", { timeZone: "Asia/Shanghai", weekday: "long" })
+    .format(new Date(`${state.selectedDate}T12:00:00+08:00`));
   return `
     <header class="topbar">
-      <div class="topbar-left">
-        <button class="icon-button" data-action="prev-date" title="上一天">‹</button>
-        <button class="icon-button" data-action="next-date" title="下一天">›</button>
-        <div class="segmented" role="tablist" aria-label="Agent filter">
-          ${["all", "codex", "claude_code", "hermes"].map((id) => `
-            <button class="${state.agentFilter === id ? "active" : ""}" data-agent-filter="${id}">
-              ${id === "all" ? "All" : AGENTS[id].name}
-            </button>
-          `).join("")}
+      <div class="topbar-brand">
+        <div class="brand-mark">db</div>
+        <div class="brand-text">
+          <h1>daybook</h1>
+          <p>夜谈台 · ${t("tagline")}</p>
+        </div>
+        <div class="capsule" role="group" aria-label="language and theme">
+          <button class="capsule-half" data-action="toggle-lang" title="中 / EN">${langLabel}</button>
+          <span class="capsule-div"></span>
+          <button class="capsule-half" data-action="toggle-theme" title="light / dark">${themeIcon}</button>
         </div>
       </div>
-      <div class="topbar-actions">
-        <label class="search">
-          <span>Search</span>
-          <input id="source-search" value="${escapeHtml(state.search)}" placeholder="Search sources..." />
-        </label>
+      <div class="topbar-center">
+        <button class="icon-button" data-action="prev-date" title="${t("prevDay")}">‹</button>
+        <div class="topbar-date">
+          <strong>${fmtDate(state.selectedDate)}</strong>
+          <span>${weekdayLong}</span>
+        </div>
+        <button class="icon-button" data-action="next-date" title="${t("nextDay")}">›</button>
+      </div>
+      <div class="topbar-right">
+        <button class="icon-button ${state.leftOpen ? "on" : ""}" data-action="toggle-left" title="${t("toggleLeft")}">☰</button>
+        <button class="icon-button ${state.rightOpen ? "on" : ""}" data-action="toggle-right" title="${t("toggleRight")}">⊟</button>
       </div>
       <div class="mobile-date-strip">
         ${state.dateList.slice(0, 30).map((item) => `
@@ -243,65 +329,49 @@ function renderTopbar(daily) {
 }
 
 function renderDailyHeader(daily) {
+  const dayEvents = state.events.filter((event) => event.date === state.selectedDate);
+  const projects = new Set(dayEvents.map((e) => e.payload.project).filter((p) => p && p !== "后台 / 杂项")).size;
+  const activeAgents = new Set(dayEvents.map((e) => e.sourceAgent)).size;
   return `
     <section class="daily-header">
-      <div>
-        <p class="small-caps">Daily Review · Asia/Shanghai</p>
+      <div class="daily-headline">
+        <p class="small-caps">${t("dailyReview")}</p>
         <h2>${escapeHtml(daily.title)}</h2>
-        <p>${escapeHtml(daily.summary)}</p>
+        <p class="daily-sub">${escapeHtml(daily.summary)}</p>
       </div>
       <div class="metrics">
-        <div class="metric">
-          <span>Where they disagreed</span>
-          <strong>${daily.threads.filter((thread) => thread.hasDisagreement).length}</strong>
-          <small>open threads tonight</small>
-        </div>
-        <div class="metric">
-          <span>Sync completeness</span>
-          <strong>${daily.syncCompleteness}%</strong>
-          <div class="meter"><i style="width:${daily.syncCompleteness}%"></i></div>
-        </div>
-        <div class="metric">
-          <span>Needs review</span>
-          <strong>${daily.unresolvedCount}</strong>
-          <small>conflict / quarantine / redaction</small>
-        </div>
+        <div class="metric"><strong>${dayEvents.length}</strong><span>${t("metricReal")}</span></div>
+        <div class="metric"><strong>${projects}</strong><span>${t("metricProjects")}</span></div>
+        <div class="metric"><strong>${activeAgents}</strong><span>${t("metricAgents")}</span></div>
       </div>
     </section>
   `;
 }
 
 function stanceBadge(stance) {
-  const map = {
-    disagree: ["✗", "反驳", "disagree"],
-    agree: ["✓", "同意", "agree"],
-    build: ["↗", "推进", "build"],
-    co_worked: ["⇄", "同台", "cowork"],
-    handoff: ["→", "接力", "handoff"],
-    open: ["•", "提出", "open"]
-  };
-  const [icon, label, cls] = map[stance] || map.open;
-  return `<span class="stance ${cls}">${icon} ${label}</span>`;
+  const map = STANCE_I18N[state.lang] || STANCE_I18N.zh;
+  const [icon, label] = map[stance] || map.open;
+  return `<span class="stance ${stance || "open"}">${icon} ${label}</span>`;
 }
 
 function threadFlag(thread) {
-  if (thread.hasDisagreement) return `<span class="thread-flag">有分歧</span>`;
-  if (thread.implicit) return `<span class="thread-flag cowork">同台协作</span>`;
-  return `<span class="thread-flag agreed">已对齐</span>`;
+  if (thread.hasDisagreement) return `<span class="thread-flag">${t("flagDisagree")}</span>`;
+  if (thread.implicit) return `<span class="thread-flag cowork">${t("flagCowork")}</span>`;
+  return `<span class="thread-flag agreed">${t("flagAligned")}</span>`;
 }
 
 function renderThreads(daily) {
   const threads = daily.threads;
   const anyDisagreement = threads.some((thread) => thread.hasDisagreement);
-  const heading = anyDisagreement ? "今天 agent 之间的交锋" : "今天谁和谁在同一件事上";
+  const heading = anyDisagreement ? t("clash") : t("cowork");
   return `
-    <section class="threads" aria-label="agent 之间的协作与交锋">
+    <section class="threads" aria-label="cross-agent threads">
       <div class="panel-heading">
         <div>
-          <p class="small-caps">Cross-agent threads</p>
+          <p class="small-caps">${t("threadsCap")}</p>
           <h3>${heading}</h3>
         </div>
-        <span class="threads-count">${threads.length} thread${threads.length === 1 ? "" : "s"}</span>
+        <span class="threads-count">${threads.length} ${t("threadsWord")}</span>
       </div>
       ${threads.length ? `
         <div class="thread-list">
@@ -329,7 +399,7 @@ function renderThreads(daily) {
             </article>
           `).join("")}
         </div>
-      ` : `<div class="empty">今天三个 agent 没有在同一个项目上交集。各自的进展见下方分栏。</div>`}
+      ` : `<div class="empty">${t("threadsEmpty")}</div>`}
     </section>
   `;
 }
@@ -390,32 +460,19 @@ function renderTimeline(daily) {
 
 function renderAgentColumn(agent, daily) {
   const meta = AGENTS[agent.agentId];
-  const sourcePills = agent.sourceIds.map((sourceId) => {
-    const source = sourceById(sourceId);
-    return `<button class="source-pill" data-source-id="${sourceId}">${escapeHtml(source?.title || sourceId)}</button>`;
-  }).join("");
-
   return `
     <article class="agent-column" style="--accent:${meta.accent}; --soft:${meta.soft}">
       <div class="agent-head">
-        <div>
-          <h3>${agent.name}</h3>
-          <p>${agent.role}</p>
-        </div>
-        <button class="mini-action" data-agent-filter="${agent.agentId}">Focus</button>
+        <h3>${agent.name}</h3>
+        <p>${agent.role}</p>
       </div>
-      ${renderList("Done", agent.done)}
-      ${renderList("Recently learned", agent.learned)}
-      ${renderList("Tomorrow", agent.tomorrow)}
-      ${renderList("Needs attention", agent.blockers)}
-      <div class="trace-box">
-        <span>Trace / Sources</span>
-        <div>${sourcePills || "<em>No source yet</em>"}</div>
-      </div>
+      ${renderList(t("done"), agent.done)}
+      ${renderList(t("learned"), agent.learned)}
+      ${renderList(t("tomorrow"), agent.tomorrow)}
+      ${renderList(t("blockers"), agent.blockers)}
       <form class="composer" data-composer-agent="${agent.agentId}">
-        <label for="note-${agent.agentId}">${agent.name} 写作区</label>
-        <textarea id="note-${agent.agentId}" name="note" placeholder="写一条本地 mock 同步..."></textarea>
-        <button class="primary full-width" type="submit">Add local note</button>
+        <textarea id="note-${agent.agentId}" name="note" placeholder="${t("composer")}"></textarea>
+        <button class="primary full-width" type="submit">${t("addNote")}</button>
       </form>
     </article>
   `;
@@ -434,10 +491,10 @@ function renderList(label, items) {
 
 function renderRightPanel(daily, weekly) {
   const tabs = [
-    ["sources", "Sources"],
-    ["conversation", "Conversation"],
-    ["weekly", "Weekly"],
-    ["safety", "Safety"]
+    ["conversation", t("tabConversation")],
+    ["weekly", t("tabWeekly")],
+    ["sources", t("tabSources")],
+    ["safety", t("tabSafety")]
   ];
   return `
     <div class="right-tabs">
@@ -743,6 +800,10 @@ function handleAction(action) {
   }
   if (action === "open-dry-run") state.dryRunOpen = true;
   if (action === "close-dry-run") state.dryRunOpen = false;
+  if (action === "toggle-lang") { state.lang = state.lang === "zh" ? "en" : "zh"; persistPrefs(); }
+  if (action === "toggle-theme") { state.theme = state.theme === "light" ? "dark" : "light"; persistPrefs(); }
+  if (action === "toggle-left") { state.leftOpen = !state.leftOpen; persistPrefs(); }
+  if (action === "toggle-right") { state.rightOpen = !state.rightOpen; persistPrefs(); }
   if (action === "generate-weekly") {
     state.generatedWeekly = true;
     state.rightTab = "weekly";

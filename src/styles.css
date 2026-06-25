@@ -1481,3 +1481,153 @@ pre {
     grid-template-columns: 1fr;
   }
 }
+
+/* ============================================================
+   v2 layout — Steve Jobs pass: one screen, one focus, breathing room.
+   Full-width topbar + capsule toggle, collapsible rails, dark mode.
+   ============================================================ */
+
+:root { --topbar-h: 70px; }
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0e0f10;
+  --surface: #17181a;
+  --surface-soft: #1d1f21;
+  --ink: #ededec;
+  --muted: #a3a09a;
+  --faint: #74726c;
+  --line: #292b2e;
+  --line-strong: #3a3d41;
+  --shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+}
+
+body, .app-root { transition: background-color 0.25s ease, color 0.25s ease; }
+
+.app-root {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+/* --- full-width topbar --- */
+.app-root > .topbar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  min-height: var(--topbar-h);
+  padding: 12px 30px;
+  background: color-mix(in srgb, var(--bg), transparent 14%);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--line);
+}
+
+.topbar-brand { display: flex; align-items: center; gap: 12px; }
+.topbar-brand .brand-mark {
+  width: 38px; height: 38px; border-radius: 10px;
+  display: grid; place-items: center;
+  background: var(--ink); color: var(--bg);
+  font-weight: 800; font-size: 15px; letter-spacing: -0.02em;
+}
+.topbar-brand .brand-text h1 { margin: 0; font-size: 19px; font-weight: 750; letter-spacing: -0.01em; }
+.topbar-brand .brand-text p { margin: 1px 0 0; font-size: 11.5px; color: var(--muted); }
+
+/* capsule: language | theme */
+.capsule {
+  display: inline-flex; align-items: center;
+  margin-left: 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.capsule-half {
+  border: 0; background: transparent; color: var(--ink);
+  min-width: 40px; height: 30px; padding: 0 12px;
+  font-size: 13px; font-weight: 650;
+  display: grid; place-items: center;
+}
+.capsule-half:hover { background: var(--surface-soft); }
+.capsule-div { width: 1px; align-self: stretch; background: var(--line-strong); }
+
+.topbar-center { display: flex; align-items: center; gap: 12px; margin: 0 auto; }
+.topbar-date { text-align: center; min-width: 120px; }
+.topbar-date strong { display: block; font-size: 15px; font-weight: 700; }
+.topbar-date span { font-size: 11px; color: var(--muted); }
+
+.topbar-right { display: flex; align-items: center; gap: 8px; }
+.app-root > .topbar .icon-button.on { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+
+/* --- shell grid below topbar --- */
+.app-root > .shell {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 244px minmax(0, 1fr) 360px;
+  background: var(--bg);
+}
+.app-root.right-collapsed > .shell { grid-template-columns: 244px minmax(0, 1fr); }
+.app-root.left-collapsed > .shell { grid-template-columns: minmax(0, 1fr) 360px; }
+.app-root.left-collapsed.right-collapsed > .shell { grid-template-columns: minmax(0, 1fr); }
+.app-root.left-collapsed .sidebar { display: none; }
+.app-root.right-collapsed .right-panel { display: none; }
+
+.app-root .sidebar,
+.app-root .right-panel {
+  position: sticky;
+  top: var(--topbar-h);
+  height: calc(100vh - var(--topbar-h));
+  align-self: start;
+  overflow-y: auto;
+  background: color-mix(in srgb, var(--surface), transparent 8%);
+  backdrop-filter: blur(14px);
+}
+.app-root .sidebar { border-right: 1px solid var(--line); }
+.app-root .right-panel { border-left: 1px solid var(--line); padding: 22px 20px; }
+
+/* --- center: breathing room --- */
+.app-root .workspace {
+  padding: 30px 44px 72px;
+  max-width: 1080px;
+  margin: 0 auto;
+  width: 100%;
+}
+.app-root .daily-header {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: 28px; grid-template-columns: none; margin-bottom: 4px;
+}
+.app-root .daily-headline { min-width: 0; }
+.daily-sub { color: var(--muted); font-size: 13.5px; margin-top: 6px; max-width: 60ch; }
+.app-root .metrics { display: flex; gap: 30px; flex: none; background: transparent; border: 0; align-self: end; }
+.app-root .metric { text-align: right; min-height: 0; padding: 0; border-right: 0; }
+.app-root .metric strong { display: block; font-size: 25px; font-weight: 750; line-height: 1.1; }
+.app-root .metric span { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.07em; }
+
+.app-root .threads { margin-top: 30px; }
+.app-root .thread-list { gap: 18px; }
+.app-root .thread { padding: 20px 22px; }
+.app-root .agent-grid { gap: 24px; margin-top: 30px; }
+.app-root .agent-column { padding: 22px 20px; }
+.app-root .agent-list { margin-bottom: 16px; }
+
+/* dark-mode fixes for elements that hardcoded light colors */
+[data-theme="dark"] .segmented { background: var(--surface-soft); }
+[data-theme="dark"] .segmented button.active { background: var(--ink); color: var(--bg); }
+[data-theme="dark"] .agent-column { background: color-mix(in srgb, var(--accent), var(--surface) 86%); }
+[data-theme="dark"] .thread-demo { background: rgba(255, 255, 255, 0.06); }
+[data-theme="dark"] .brand-mark { background: var(--ink); color: var(--bg); }
+
+/* keep date rail calm */
+.app-root .sidebar .date-list { max-height: none; }
+
+@media (max-width: 1100px) {
+  .app-root > .shell,
+  .app-root.right-collapsed > .shell,
+  .app-root.left-collapsed > .shell { grid-template-columns: 1fr; }
+  .app-root .sidebar, .app-root .right-panel { display: none; }
+  .topbar-brand .brand-text p { display: none; }
+}
