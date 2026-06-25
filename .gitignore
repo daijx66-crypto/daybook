@@ -1,0 +1,24 @@
+# dependencies
+node_modules/
+
+# local / generated data (never commit real agent journals)
+data/events.local.jsonl
+data/*.local.jsonl
+
+# OS
+.DS_Store
+
+# editor / tooling
+.claude/
+.vscode/
+.idea/
+
+# safe-delete staging
+.trash/
+
+# internal agent work notes
+.aiwork/
+
+# playwright
+test-results/
+playwright-report/

@@ -1,0 +1,16 @@
+{
+  "name": "agent-sync-demo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "python3 -m http.server 5177 --bind 127.0.0.1",
+    "check": "node scripts/check-demo.mjs",
+    "check:jsonl": "node scripts/validate-jsonl.mjs data/events.sample.jsonl",
+    "build:standalone": "node scripts/build-standalone.mjs",
+    "shots": "node scripts/verify-playwright.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.61.1"
+  }
+}
