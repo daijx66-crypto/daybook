@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { SOURCES } from "../src/data.js";
+import { findUnredactedSecret } from "./secret-patterns.mjs";
 
 const allowedAgents = new Set(["codex", "claude_code", "hermes"]);
 const allowedInstances = new Set(["mock-ui", "local-fixture", "future-cli", "future-mcp", "local-import"]);
@@ -90,8 +91,8 @@ function validateEvent(event, lineNumber) {
     assert.ok(sourceIds.has(sourceId), `${prefix}: unknown sourceId ${sourceId}`);
   });
 
-  assert.ok(!JSON.stringify(event).includes("tenant_access_token"), `${prefix}: forbidden token-shaped key`);
-  assert.ok(!JSON.stringify(event).includes("api_key="), `${prefix}: forbidden api_key pattern`);
+  const secretPattern = findUnredactedSecret(JSON.stringify(event));
+  assert.ok(!secretPattern, `${prefix}: forbidden token-shaped value (${secretPattern})`);
 }
 
 function assertString(value, label) {

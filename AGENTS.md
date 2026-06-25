@@ -26,8 +26,10 @@ data/*.jsonl  ──►  src/projection.js  ──►  src/app.js
 
 ## Hard boundaries (v1)
 
-- Mock / JSONL / `localStorage` only. **No external API calls. No secrets read. No
-  cron / background jobs. No real Feishu/Notion writes.**
+- Mock / JSONL / `localStorage` only. **No external API calls. No env/keychain/
+  secret-store reads. No cron / background jobs. No real Feishu/Notion writes.**
+- `npm run ingest:local` may read local Claude Code / Codex / Hermes session
+  files, but only writes redacted summaries to git-ignored JSONL.
 - Never commit real agent journals — `data/events.local.jsonl` is git-ignored.
 - Suspected secrets must be redacted *before* an event is written.
 
@@ -36,6 +38,7 @@ data/*.jsonl  ──►  src/projection.js  ──►  src/app.js
 ```bash
 npm run check          # projection contract
 npm run check:jsonl    # JSONL handoff format
+npm run check:security # fake-token rejection guardrail
 npm run build:standalone   # regenerate standalone.html if src changed
 ```
 

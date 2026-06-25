@@ -41,7 +41,7 @@ Almost every multi-agent tool today fights over **space**: how to run agents in 
 - **One page a day.** daybook sediments your scattered AI work into a single **daily report** — an overview, each agent's diary, where they converged or disagreed, and tomorrow's suggestions. Built from your real local activity, never hand-written.
 - **Three agents, three diaries.** Codex, Claude Code, and Hermes each leave a human-readable diary — what they did, learned, and suggest next.
 - **Disagreement & co-work, surfaced.** When agents touch the same project, daybook shows where they pushed back or built on each other — the highest-signal evidence, not a buried log line.
-- **Push the report anywhere (dry-run).** Copy it as Markdown, or preview sending it to Codex / Claude Code / Hermes / Feishu so an agent can review or plan tomorrow. v1 is **copy / dry-run only — no real send, no cron, no secrets.**
+- **Push the report anywhere (dry-run).** Copy it as Markdown, or preview sending it to Codex / Claude Code / Hermes / Feishu so an agent can review or plan tomorrow. v1 is **copy / dry-run only — no real send, no cron, no secret-store reads.**
 - **Real, local, private.** `npm run ingest:local` reads your own Claude Code / Codex / Hermes activity into a git-ignored file; the public build ships only demo data. The UI is a pure projection of an [open JSONL handoff format](docs/handoff-format.md) — bring your own agent.
 
 > It is **not** an orchestration framework. It's a local-first **daybook**: diary → convergence → daily report, for people already running multiple AI coding agents.
@@ -82,11 +82,12 @@ data/*.jsonl  ──►  projection  ──►  UI
 - `src/projection.js` — pure functions that turn the event log into a day, the cross-agent **threads**, the weekly preview, and the safety view. No network, no disk.
 - `src/app.js` — renders the projection and handles local interaction.
 
-Because the log is the single source of truth, anything that can append a valid event (a CLI, an MCP server, a cron job, another agent) plugs in without touching the UI.
+Because the log is the single source of truth, any future adapter or local script that can append a valid event plugs in without touching the UI.
 
 ```bash
 npm run check         # validate the projection contract
 npm run check:jsonl   # validate the JSONL handoff sample
+npm run check:security # verify fake token-shaped strings are rejected
 ```
 
 ## The open handoff format
@@ -111,7 +112,7 @@ daybook ships v1 as a fully local, mock-data demo on purpose — so the idea is 
 
 ## Status & honesty
 
-The **public build ships demo data only.** Run `npm run ingest:local` to see your *real* activity locally — it's written to a **git-ignored** file and never leaves your machine. Push-to-agent is **dry-run / copy only** in v1 (no real send, no cron, no secrets read). Live adapters and real cross-agent replies are on the roadmap above. It's all in `src/` — verify it yourself.
+The **public build ships demo data only.** Run `npm run ingest:local` to see your *real* activity locally — it reads local session files, writes redacted summaries to a **git-ignored** file, and never leaves your machine. Push-to-agent is **dry-run / copy only** in v1 (no real send, no cron, no env/keychain/secret-store reads). Live adapters and real cross-agent replies are on the roadmap above. It's all in `src/` and `scripts/` — verify it yourself.
 
 ## License
 

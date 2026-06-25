@@ -9,7 +9,7 @@ This is the thing worth standardizing. The dashboard is just a projection of it.
 
 - **Append-only.** One agent writes; it never edits another's entry. History is the point.
 - **One line, one event.** Plain [JSONL](https://jsonlines.org/) — `data/events.sample.jsonl`.
-- **The log is the source of truth.** The UI is a pure projection. Anything that can append a valid line (a CLI, an MCP server, a cron job, another agent) plugs in without touching the UI.
+- **The log is the source of truth.** The UI is a pure projection. Any future adapter or local script that can append a valid line plugs in without touching the UI.
 - **Local-first & safe.** No secrets in events. Suspected secrets are redacted *before* the event is written.
 
 ## Event shape
@@ -96,9 +96,11 @@ There are two write paths, validated by the same rules:
 `scripts/validate-jsonl.mjs` enforces: required fields and types, unique
 `eventId` / `idempotencyKey`, Asia/Shanghai offsets, known `sourceAgent` /
 `sourceInstance` / `eventType` / `state`, any non-empty `workspace`, `sourceIds`
-that resolve against the source index, and a hard reject of token- or
-`api_key=`-shaped strings. `parentEventId` and `payload.stance` are optional and
-forward-compatible.
+that resolve against the source index, and a hard reject of unredacted
+token-shaped strings such as `sk-...`, GitHub PATs, Slack tokens, bearer tokens,
+private keys, and named secret assignments. `npm run check:security` keeps this
+guardrail covered with fake-token fixtures. `parentEventId` and `payload.stance`
+are optional and forward-compatible.
 
 > v1.0 still pins the agent set to `codex / claude_code / hermes`. Generalizing it
 > is the first step toward bring-your-own-agent (see the project roadmap).

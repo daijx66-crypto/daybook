@@ -99,7 +99,8 @@ const I18N = {
     reportCap: "今日产出", reportTitle: "今日日报", expand: "展开", collapse: "收起",
     overview: "今日总览", publish: "推送预览", copyMd: "复制 Markdown", sendTo: "发给",
     dryRunNote: "v1 仅 dry-run / 复制：不真实发送、不写飞书、不读密钥、不建定时任务。",
-    copied: "已复制", risksLabel: "风险 / 待解决", noReport: "今天还没有可成报的真实活动。", coworkWord: "处协作"
+    copied: "已复制", risksLabel: "风险 / 待解决", noReport: "今天还没有可成报的真实活动。", coworkWord: "处协作",
+    allAgents: "全部", wWins: "完成", wLearnings: "学到", wRisks: "风险 / 冲突", wNext: "下一步"
   },
   en: {
     tagline: "Multi-agent nightly work journal", dailyReview: "Daily review · Shanghai",
@@ -123,7 +124,8 @@ const I18N = {
     reportCap: "Today's output", reportTitle: "Daily report", expand: "Expand", collapse: "Collapse",
     overview: "Overview", publish: "Publish", copyMd: "Copy Markdown", sendTo: "Send to",
     dryRunNote: "v1 is dry-run / copy only: no real send, no Feishu writes, no secrets, no cron.",
-    copied: "Copied", risksLabel: "Risks / blockers", noReport: "No real activity to report yet today.", coworkWord: "co-work"
+    copied: "Copied", risksLabel: "Risks / blockers", noReport: "No real activity to report yet today.", coworkWord: "co-work",
+    allAgents: "All", wWins: "Wins", wLearnings: "Learnings", wRisks: "Risks / conflicts", wNext: "Next actions"
   }
 };
 const STANCE_I18N = {
@@ -323,7 +325,9 @@ function renderTopbar(daily) {
   const themeIcon = state.theme === "dark" ? "☾" : "☀";
   const maxOffset = Math.max(0, state.dateList.length - 7);
   const offset = Math.min(state.dateOffset, maxOffset);
-  const week = state.dateList.slice(offset, offset + 7);
+  // dateList is newest-first; show the week oldest→newest (left→right) so the axis
+  // reads like a calendar and ‹ = previous (older) week, › = next (newer) week.
+  const week = state.dateList.slice(offset, offset + 7).reverse();
   return `
     <header class="topbar">
       <div class="topbar-brand">
@@ -620,15 +624,14 @@ function renderRightPanel(daily, weekly) {
   const tabs = [
     ["conversation", t("tabConversation")],
     ["weekly", t("tabWeekly")],
-    ["sources", t("tabSources")],
     ["safety", t("tabSafety")]
   ];
+  if (!["conversation", "weekly", "safety"].includes(state.rightTab)) state.rightTab = "conversation";
   return `
     <div class="right-tabs">
       ${tabs.map(([id, label]) => `<button class="${state.rightTab === id ? "active" : ""}" data-right-tab="${id}">${label}</button>`).join("")}
     </div>
     <div class="right-content">
-      ${state.rightTab === "sources" ? renderSourceIndex(daily) : ""}
       ${state.rightTab === "conversation" ? renderConversation(daily) : ""}
       ${state.rightTab === "weekly" ? renderWeekly(weekly) : ""}
       ${state.rightTab === "safety" ? renderSafety(daily) : ""}
@@ -698,12 +701,11 @@ function renderConversation(daily) {
     <section class="conversation">
       <div class="panel-heading">
         <div>
-          <p class="small-caps">Daily Conversation</p>
           <h3>${t("convHeading")}</h3>
         </div>
       </div>
       <div class="segmented thin">
-        ${["all", "codex", "claude_code", "hermes"].map((id) => `<button class="${state.conversationFilter === id ? "active" : ""}" data-conversation-filter="${id}">${id === "all" ? "All" : AGENTS[id].name}</button>`).join("")}
+        ${["all", "codex", "claude_code", "hermes"].map((id) => `<button class="${state.conversationFilter === id ? "active" : ""}" data-conversation-filter="${id}">${id === "all" ? t("allAgents") : AGENTS[id].name}</button>`).join("")}
       </div>
       <div class="conversation-list">
         ${items.map((item) => {
@@ -726,16 +728,15 @@ function renderWeekly(weekly) {
     <section class="weekly">
       <div class="panel-heading">
         <div>
-          <p class="small-caps">Weekly Preview</p>
           <h3>${state.generatedWeekly ? t("weeklyDraft") : t("weeklyPreview")}</h3>
         </div>
-        <button class="primary compact" data-action="generate-weekly">Generate</button>
+        <button class="primary compact" data-action="generate-weekly">${t("weeklyGenerate")}</button>
       </div>
       <p class="preview-range">${weekly.range}</p>
-      ${renderWeeklyBlock("Wins", weekly.wins)}
-      ${renderWeeklyBlock("Learnings", weekly.learnings)}
-      ${renderWeeklyBlock("Risks / conflicts", weekly.risks)}
-      ${renderWeeklyBlock("Next actions", weekly.nextActions)}
+      ${renderWeeklyBlock(t("wWins"), weekly.wins)}
+      ${renderWeeklyBlock(t("wLearnings"), weekly.learnings)}
+      ${renderWeeklyBlock(t("wRisks"), weekly.risks)}
+      ${renderWeeklyBlock(t("wNext"), weekly.nextActions)}
     </section>
   `;
 }
@@ -751,12 +752,12 @@ function renderWeeklyBlock(title, items) {
 
 function renderSafety(daily) {
   const summary = [
-    ["Accepted", daily.safety.accepted, "accepted"],
-    ["Duplicate", daily.safety.duplicates, "duplicate"],
-    ["Conflict", daily.safety.conflicts, "conflict"],
-    ["Quarantined", daily.safety.quarantined, "quarantined"],
-    ["Redacted", daily.safety.redacted, "redacted"],
-    ["Pending", daily.safety.pendingSync, "pending_sync"]
+    [stateLabelT("accepted"), daily.safety.accepted, "accepted"],
+    [stateLabelT("duplicate"), daily.safety.duplicates, "duplicate"],
+    [stateLabelT("conflict"), daily.safety.conflicts, "conflict"],
+    [stateLabelT("quarantined"), daily.safety.quarantined, "quarantined"],
+    [stateLabelT("redacted"), daily.safety.redacted, "redacted"],
+    [stateLabelT("pending_sync"), daily.safety.pendingSync, "pending_sync"]
   ];
   const selected = daily.safety.items.find((item) => item.id === state.selectedSafetyId) || daily.safety.items[0];
 
@@ -764,7 +765,6 @@ function renderSafety(daily) {
     <section class="safety">
       <div class="panel-heading">
         <div>
-          <p class="small-caps">Safety Review</p>
           <h3>${t("safetyHeading")}</h3>
         </div>
       </div>
@@ -774,22 +774,33 @@ function renderSafety(daily) {
       <div class="safety-list">
         ${daily.safety.items.length ? daily.safety.items.map((item) => `
           <button class="safety-row ${selected?.id === item.id ? "active" : ""} ${item.state}" data-safety-id="${item.id}">
-            <span>${stateLabel(item.state)}</span>
+            <span>${stateLabelT(item.state)}</span>
             <strong>${escapeHtml(item.title)}</strong>
           </button>
         `).join("") : `<div class="empty">${t("safetyEmpty")}</div>`}
       </div>
       ${selected ? `
         <div class="trace-detail">
-          <p class="small-caps">Trace</p>
           <h4>${escapeHtml(selected.title)}</h4>
-          <p>${escapeHtml(selected.explanation)}</p>
+          <p>${escapeHtml(safetyExplT(selected.state) || selected.explanation)}</p>
           <code>${escapeHtml(selected.traceId)}</code>
         </div>
       ` : ""}
     </section>
   `;
 }
+
+const STATE_LABEL_I18N = {
+  zh: { accepted: "已接受", duplicate: "重复忽略", conflict: "冲突", quarantined: "隔离", redacted: "已脱敏", pending_sync: "待 dry-run", failed: "可恢复失败" },
+  en: { accepted: "Accepted", duplicate: "Duplicate", conflict: "Conflict", quarantined: "Quarantined", redacted: "Redacted", pending_sync: "Pending", failed: "Recoverable" }
+};
+function stateLabelT(s) { return (STATE_LABEL_I18N[state.lang] || STATE_LABEL_I18N.zh)[s] || s; }
+
+const SAFETY_EXPL_I18N = {
+  zh: { duplicate: "幂等键命中，重复事件被忽略。", conflict: "多个 agent 对同一决策给出不同建议，需人工确认。", quarantined: "schema 校验失败。", redacted: "检测到疑似 secret，已本地脱敏。", pending_sync: "仅进入 dry-run 队列，未调用外部 API。", failed: "模拟失败：可恢复错误。" },
+  en: { duplicate: "Idempotency hit — duplicate ignored.", conflict: "Agents disagree on a decision; needs a human.", quarantined: "Schema validation failed.", redacted: "Secret-shaped text detected and redacted locally.", pending_sync: "Queued for dry-run only; no external API called.", failed: "Simulated recoverable failure." }
+};
+function safetyExplT(s) { return (SAFETY_EXPL_I18N[state.lang] || SAFETY_EXPL_I18N.zh)[s] || ""; }
 
 function renderDryRunDrawer(plan) {
   return `

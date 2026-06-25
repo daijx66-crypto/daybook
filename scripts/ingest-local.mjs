@@ -12,6 +12,7 @@
 // Secret-shaped strings are redacted before anything is written.
 import { readdirSync, statSync, openSync, readSync, closeSync, writeFileSync, existsSync } from "node:fs";
 import { join, basename, resolve } from "node:path";
+import { redactSecrets } from "./secret-patterns.mjs";
 
 const HOME = process.env.HOME;
 const ROOT = resolve(import.meta.dirname, "..");
@@ -36,16 +37,9 @@ function mtimeDate(path) {
 let redactedHits = 0;
 function redact(text) {
   if (!text) return "";
-  let s = String(text);
-  const before = s;
-  s = s
-    .replace(/(api[_-]?key|secret|password|passwd|bearer|access[_-]?token|tenant_access_token)\s*[:=]\s*\S+/gi, "$1=[REDACTED]")
-    .replace(/sk-[A-Za-z0-9]{12,}/g, "[REDACTED]")
-    .replace(/ghp_[A-Za-z0-9]{20,}/g, "[REDACTED]")
-    .replace(/xox[baprs]-[A-Za-z0-9-]{8,}/g, "[REDACTED]")
-    .replace(/-----BEGIN[\s\S]*?-----/g, "[REDACTED KEY]");
-  if (s !== before) redactedHits++;
-  return s;
+  const { text: redacted, redacted: changed } = redactSecrets(text);
+  if (changed) redactedHits++;
+  return redacted;
 }
 
 // Strip injected scaffolding (env context, system reminders, xml-ish tags) so a
