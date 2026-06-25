@@ -95,11 +95,11 @@ function conversation(dayEvents) {
   }));
 }
 
-// Build cross-agent threads: an entry that replies to another entry (via
+// Build EXPLICIT cross-agent threads: an entry that replies to another entry (via
 // parentEventId) forms a chain. We surface only chains where two or more
-// different agents take part — that is where the product's soul lives:
-// agents referencing and pushing back on each other.
-function buildThreads(dayEvents) {
+// different agents take part — agents referencing and pushing back on each other.
+// These only exist in the seed demo (real ingested events carry no parentEventId).
+function buildExplicitThreads(dayEvents) {
   const byId = new Map(dayEvents.map((event) => [event.eventId, event]));
   const childrenOf = new Map();
   const isReply = new Set();
@@ -147,6 +147,68 @@ function buildThreads(dayEvents) {
     })
     .filter((thread) => thread.participantCount >= 2)
     .sort((a, b) => (b.hasDisagreement ? 1 : 0) - (a.hasDisagreement ? 1 : 0) || a.time.localeCompare(b.time));
+}
+
+// Build IMPLICIT threads from REAL data: when 2+ agents worked the same project on
+// the same day, that co-working relationship objectively exists — we surface it
+// honestly (neutral "co_worked" stance), never inventing a disagreement.
+function buildImplicitThreads(dayEvents) {
+  const real = dayEvents.filter(
+    (event) => event.sourceInstance === "local-import" &&
+      event.payload.project &&
+      event.payload.project !== "后台 / 杂项"
+  );
+  const byProject = new Map();
+  real.forEach((event) => {
+    const p = event.payload.project;
+    if (!byProject.has(p)) byProject.set(p, []);
+    byProject.get(p).push(event);
+  });
+
+  const threads = [];
+  for (const [project, evs] of byProject) {
+    const agents = [...new Set(evs.map((e) => e.sourceAgent))];
+    if (agents.length < 2) continue;
+    // One representative entry per agent (the most substantive), so a co-work
+    // thread reads as "who worked on this", not a flood of near-duplicate lines.
+    const repByAgent = new Map();
+    for (const e of evs) {
+      const cur = repByAgent.get(e.sourceAgent);
+      if (!cur || (e.payload.summary || "").length > (cur.payload.summary || "").length) {
+        repByAgent.set(e.sourceAgent, e);
+      }
+    }
+    const reps = [...repByAgent.values()].sort((a, b) => a.occurredAt.localeCompare(b.occurredAt));
+    const nodes = reps.map((event, index) => ({
+      eventId: event.eventId,
+      agentId: event.sourceAgent,
+      name: AGENTS[event.sourceAgent].name,
+      accent: AGENTS[event.sourceAgent].accent,
+      time: event.occurredAt.slice(11, 16),
+      stance: index === 0 ? "open" : "co_worked",
+      title: event.payload.title,
+      summary: event.payload.summary
+    }));
+    threads.push({
+      rootId: `implicit-${project}`,
+      topic: project,
+      nodes,
+      participantCount: reps.length,
+      hasDisagreement: false,
+      implicit: true,
+      demo: false,
+      time: nodes[0].time
+    });
+  }
+  return threads.sort((a, b) => b.participantCount - a.participantCount || a.topic.localeCompare(b.topic));
+}
+
+// Combined: real co-working threads first (the everyday signal), then the seed
+// demo's full-blooded disagreement threads (clearly flagged demo in the UI).
+function buildThreads(dayEvents) {
+  const implicit = buildImplicitThreads(dayEvents);
+  const explicit = buildExplicitThreads(dayEvents).map((thread) => ({ ...thread, implicit: false, demo: true }));
+  return [...implicit, ...explicit];
 }
 
 function safety(dayEvents) {

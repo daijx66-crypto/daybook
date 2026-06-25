@@ -668,6 +668,40 @@ button {
   color: var(--muted);
 }
 
+.stance.cowork {
+  background: rgba(18, 97, 214, 0.12);
+  color: #0f4ba3;
+}
+
+.stance.handoff {
+  background: rgba(183, 121, 31, 0.14);
+  color: #8a5a12;
+}
+
+.thread-flags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+.thread-demo {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--muted);
+  border: 1px dashed var(--line-strong);
+}
+
+.thread-flag.cowork {
+  background: rgba(18, 97, 214, 0.1);
+  color: #0f4ba3;
+  border-color: rgba(18, 97, 214, 0.26);
+}
+
 .agent-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

@@ -674,6 +674,40 @@ button {
   color: var(--muted);
 }
 
+.stance.cowork {
+  background: rgba(18, 97, 214, 0.12);
+  color: #0f4ba3;
+}
+
+.stance.handoff {
+  background: rgba(183, 121, 31, 0.14);
+  color: #8a5a12;
+}
+
+.thread-flags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+.thread-demo {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--muted);
+  border: 1px dashed var(--line-strong);
+}
+
+.thread-flag.cowork {
+  background: rgba(18, 97, 214, 0.1);
+  color: #0f4ba3;
+  border-color: rgba(18, 97, 214, 0.26);
+}
+
 .agent-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2079,11 +2113,11 @@ function conversation(dayEvents) {
   }));
 }
 
-// Build cross-agent threads: an entry that replies to another entry (via
+// Build EXPLICIT cross-agent threads: an entry that replies to another entry (via
 // parentEventId) forms a chain. We surface only chains where two or more
-// different agents take part — that is where the product's soul lives:
-// agents referencing and pushing back on each other.
-function buildThreads(dayEvents) {
+// different agents take part — agents referencing and pushing back on each other.
+// These only exist in the seed demo (real ingested events carry no parentEventId).
+function buildExplicitThreads(dayEvents) {
   const byId = new Map(dayEvents.map((event) => [event.eventId, event]));
   const childrenOf = new Map();
   const isReply = new Set();
@@ -2131,6 +2165,68 @@ function buildThreads(dayEvents) {
     })
     .filter((thread) => thread.participantCount >= 2)
     .sort((a, b) => (b.hasDisagreement ? 1 : 0) - (a.hasDisagreement ? 1 : 0) || a.time.localeCompare(b.time));
+}
+
+// Build IMPLICIT threads from REAL data: when 2+ agents worked the same project on
+// the same day, that co-working relationship objectively exists — we surface it
+// honestly (neutral "co_worked" stance), never inventing a disagreement.
+function buildImplicitThreads(dayEvents) {
+  const real = dayEvents.filter(
+    (event) => event.sourceInstance === "local-import" &&
+      event.payload.project &&
+      event.payload.project !== "后台 / 杂项"
+  );
+  const byProject = new Map();
+  real.forEach((event) => {
+    const p = event.payload.project;
+    if (!byProject.has(p)) byProject.set(p, []);
+    byProject.get(p).push(event);
+  });
+
+  const threads = [];
+  for (const [project, evs] of byProject) {
+    const agents = [...new Set(evs.map((e) => e.sourceAgent))];
+    if (agents.length < 2) continue;
+    // One representative entry per agent (the most substantive), so a co-work
+    // thread reads as "who worked on this", not a flood of near-duplicate lines.
+    const repByAgent = new Map();
+    for (const e of evs) {
+      const cur = repByAgent.get(e.sourceAgent);
+      if (!cur || (e.payload.summary || "").length > (cur.payload.summary || "").length) {
+        repByAgent.set(e.sourceAgent, e);
+      }
+    }
+    const reps = [...repByAgent.values()].sort((a, b) => a.occurredAt.localeCompare(b.occurredAt));
+    const nodes = reps.map((event, index) => ({
+      eventId: event.eventId,
+      agentId: event.sourceAgent,
+      name: AGENTS[event.sourceAgent].name,
+      accent: AGENTS[event.sourceAgent].accent,
+      time: event.occurredAt.slice(11, 16),
+      stance: index === 0 ? "open" : "co_worked",
+      title: event.payload.title,
+      summary: event.payload.summary
+    }));
+    threads.push({
+      rootId: `implicit-${project}`,
+      topic: project,
+      nodes,
+      participantCount: reps.length,
+      hasDisagreement: false,
+      implicit: true,
+      demo: false,
+      time: nodes[0].time
+    });
+  }
+  return threads.sort((a, b) => b.participantCount - a.participantCount || a.topic.localeCompare(b.topic));
+}
+
+// Combined: real co-working threads first (the everyday signal), then the seed
+// demo's full-blooded disagreement threads (clearly flagged demo in the UI).
+function buildThreads(dayEvents) {
+  const implicit = buildImplicitThreads(dayEvents);
+  const explicit = buildExplicitThreads(dayEvents).map((thread) => ({ ...thread, implicit: false, demo: true }));
+  return [...implicit, ...explicit];
 }
 
 function safety(dayEvents) {
@@ -2339,7 +2435,9 @@ async function importLocalFile() {
     state.events = mergeEvents(state.events, imported);
     state.importedCount = imported.length;
     state.dateList = computeDateList(state.events);
-    state.selectedDate = state.dateList[0].date;
+    // Land on the most recent day that has REAL activity, not the seed demo day.
+    const mostRecentReal = [...new Set(imported.map((event) => event.date))].sort().reverse()[0];
+    state.selectedDate = mostRecentReal || state.dateList[0].date;
     render();
   } catch {
     /* file:// or no local file — expected for the standalone/public build */
@@ -2550,30 +2648,43 @@ function stanceBadge(stance) {
     disagree: ["✗", "反驳", "disagree"],
     agree: ["✓", "同意", "agree"],
     build: ["↗", "推进", "build"],
+    co_worked: ["⇄", "同台", "cowork"],
+    handoff: ["→", "接力", "handoff"],
     open: ["•", "提出", "open"]
   };
   const [icon, label, cls] = map[stance] || map.open;
   return `<span class="stance ${cls}">${icon} ${label}</span>`;
 }
 
+function threadFlag(thread) {
+  if (thread.hasDisagreement) return `<span class="thread-flag">有分歧</span>`;
+  if (thread.implicit) return `<span class="thread-flag cowork">同台协作</span>`;
+  return `<span class="thread-flag agreed">已对齐</span>`;
+}
+
 function renderThreads(daily) {
   const threads = daily.threads;
+  const anyDisagreement = threads.some((thread) => thread.hasDisagreement);
+  const heading = anyDisagreement ? "今天 agent 之间的交锋" : "今天谁和谁在同一件事上";
   return `
-    <section class="threads" aria-label="agent 之间的交锋">
+    <section class="threads" aria-label="agent 之间的协作与交锋">
       <div class="panel-heading">
         <div>
-          <p class="small-caps">Where they disagreed</p>
-          <h3>今天 agent 之间的交锋</h3>
+          <p class="small-caps">Cross-agent threads</p>
+          <h3>${heading}</h3>
         </div>
         <span class="threads-count">${threads.length} thread${threads.length === 1 ? "" : "s"}</span>
       </div>
       ${threads.length ? `
         <div class="thread-list">
           ${threads.map((thread) => `
-            <article class="thread ${thread.hasDisagreement ? "has-disagreement" : ""}">
+            <article class="thread ${thread.hasDisagreement ? "has-disagreement" : ""} ${thread.implicit ? "is-cowork" : ""}">
               <header class="thread-head">
                 <h4>${escapeHtml(thread.topic)}</h4>
-                ${thread.hasDisagreement ? `<span class="thread-flag">有分歧</span>` : `<span class="thread-flag agreed">已对齐</span>`}
+                <div class="thread-flags">
+                  ${thread.demo ? `<span class="thread-demo">Demo</span>` : ""}
+                  ${threadFlag(thread)}
+                </div>
               </header>
               <ol class="thread-chain">
                 ${thread.nodes.map((node, index) => `
@@ -2590,7 +2701,7 @@ function renderThreads(daily) {
             </article>
           `).join("")}
         </div>
-      ` : `<div class="empty">今天三个 agent 还没有互相接话。等他们各自写完，分歧会出现在这里。</div>`}
+      ` : `<div class="empty">今天三个 agent 没有在同一个项目上交集。各自的进展见下方分栏。</div>`}
     </section>
   `;
 }

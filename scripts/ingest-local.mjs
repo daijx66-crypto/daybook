@@ -57,6 +57,41 @@ function slug(s) {
   return String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "x";
 }
 
+// Fold tool/work-dir residue (not real user projects) into one quiet bucket.
+const NOISE_PROJECTS = new Set([
+  "sessions", "Desktop", "tmp", "observer-sessions", "projects", "node_modules",
+  ".claude", ".codex", "", "-", "T", "var", "folders", "private", "Documents",
+  "djx", "new-chat", "untitled"
+]);
+const FOLD_LABEL = "后台 / 杂项";
+function isNoiseProject(p) {
+  return NOISE_PROJECTS.has(p) || /worktree|^tmp|\bT$|^\.[A-Za-z]/.test(String(p));
+}
+function foldProject(p) {
+  return isNoiseProject(p) ? FOLD_LABEL : p;
+}
+
+// Reject injected system prompts / tool scaffolding so summaries read like a human
+// instruction, not "You are a Claude-Mem…" leaking onto the page.
+const NOISE_TEXT = /^(you are\b|you're a\b|<system|<command|<local-command|<environment|caveat:|hello memory agent|\[system|this session is being continued)/i;
+function looksHuman(s) {
+  const t = String(s).trim();
+  if (t.length < 3) return false;
+  if (t.startsWith("<")) return false; // tool scaffolding / observer tags
+  if (NOISE_TEXT.test(t)) return false;
+  if (/claude-mem|continuing to observe|you are a /i.test(t)) return false;
+  return true;
+}
+
+// Re-bucket flat task_update into the journal's four lanes by content.
+function classifyType(text) {
+  const t = String(text || "");
+  if (/学到|发现|原来|root cause|turns out|lesson|复盘|教训/i.test(t)) return "learning";
+  if (/明天|待办|todo|next step|接下来|下一步|roadmap|goal\b/i.test(t)) return "suggestion";
+  if (/阻塞|blocked|卡在|崩溃|hang|报错|失败了|无法|timeout/i.test(t)) return "blocked";
+  return "task_update";
+}
+
 function firstUserText(chunk) {
   for (const line of chunk.split("\n")) {
     if (!line.trim().startsWith("{")) continue;
@@ -66,10 +101,10 @@ function firstUserText(chunk) {
     const role = msg.role || obj.role || obj.type;
     if (role !== "user") continue;
     const content = msg.content ?? msg.text ?? obj.text;
-    if (typeof content === "string" && content.trim()) return content;
+    if (typeof content === "string" && content.trim() && looksHuman(content)) return content;
     if (Array.isArray(content)) {
       const t = content.find((p) => p && (p.type === "text" || typeof p.text === "string"));
-      if (t && t.text) return t.text;
+      if (t && t.text && looksHuman(t.text)) return t.text;
     }
   }
   return "";
@@ -152,16 +187,16 @@ function ingestClaude() {
         project = cwd ? basename(cwd) : proj.replace(/^-+/, "").split("-").filter(Boolean).slice(-1)[0] || proj;
         title = firstUserText(head);
       } catch { continue; }
-      addSession(agg, date, project, title);
+      addSession(agg, date, foldProject(project), title);
     }
   }
   for (const { date, project, count, samples } of agg.values()) {
     const sec = samples.some((s) => /\[REDACTED/.test(clean(s, 90)));
     pushEvent({
       id: `cc-${date}-${slug(project)}`,
-      date, agent: "claude_code", type: "task_update", time: "21:30",
+      date, agent: "claude_code", type: classifyType(samples.join(" ")), time: "21:30",
       title: project,
-      summary: `${count} 个 Claude Code 会话` + (samples.length ? `：${samples.map((s) => clean(s, 60)).join("；")}` : ""),
+      summary: `${count} 个 Claude Code 会话` + (project !== FOLD_LABEL && samples.length ? `：${samples.map((s) => clean(s, 60)).join("；")}` : ""),
       project, tags: ["claude-code", "real"], secret: sec
     });
   }
@@ -188,7 +223,7 @@ function ingestCodex() {
           project = cwd ? basename(cwd) : "codex";
           title = firstUserText(head);
         } catch { continue; }
-        addSession(agg, date, project, title);
+        addSession(agg, date, foldProject(project), title);
       }
     }
   };
@@ -196,9 +231,9 @@ function ingestCodex() {
   for (const { date, project, count, samples } of agg.values()) {
     pushEvent({
       id: `cx-${date}-${slug(project)}`,
-      date, agent: "codex", type: "task_update", time: "21:00",
+      date, agent: "codex", type: classifyType(samples.join(" ")), time: "21:00",
       title: project,
-      summary: `${count} 个 Codex 会话` + (samples.length ? `：${samples.map((s) => clean(s, 60)).join("；")}` : ""),
+      summary: `${count} 个 Codex 会话` + (project !== FOLD_LABEL && samples.length ? `：${samples.map((s) => clean(s, 60)).join("；")}` : ""),
       project, tags: ["codex", "real"]
     });
   }
@@ -220,7 +255,15 @@ function ingestHermes() {
     try {
       const head = readHead(p, 4000);
       const lines = head.split("\n").map((l) => l.trim());
-      firstPara = lines.find((l) => l && !l.startsWith("#")) || lines.find((l) => l.startsWith("#"))?.replace(/^#+\s*/, "") || "";
+      const isMeta = (l) =>
+        !l || l === "---" ||
+        /^(last_updated|canonical|status|owner|date|tags|title|author|generated)\s*[:：]/i.test(l) ||
+        (/^[a-zA-Z_-]+\s*:/.test(l) && !/[一-龥]/.test(l));
+      const body = lines.filter((l) => !l.startsWith("#") && !isMeta(l));
+      firstPara =
+        body.find((l) => /[一-龥]/.test(l) && l.length > 10) ||
+        body.find((l) => l.length > 10) ||
+        lines.find((l) => l.startsWith("#"))?.replace(/^#+\s*/, "") || "";
     } catch { /* keep empty */ }
     const titleFromFile = f.replace(/\.md$/, "").replace(/_/g, " ");
     const type = /HANDOFF/i.test(f) ? "handoff" : /DECISION/i.test(f) ? "decision" : /TODO|ROADMAP|GOAL/i.test(f) ? "suggestion" : /REPORT|AUDIT|DIAGNOSIS/i.test(f) ? "artifact" : "task_update";

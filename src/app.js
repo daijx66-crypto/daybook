@@ -63,7 +63,9 @@ async function importLocalFile() {
     state.events = mergeEvents(state.events, imported);
     state.importedCount = imported.length;
     state.dateList = computeDateList(state.events);
-    state.selectedDate = state.dateList[0].date;
+    // Land on the most recent day that has REAL activity, not the seed demo day.
+    const mostRecentReal = [...new Set(imported.map((event) => event.date))].sort().reverse()[0];
+    state.selectedDate = mostRecentReal || state.dateList[0].date;
     render();
   } catch {
     /* file:// or no local file — expected for the standalone/public build */
@@ -274,30 +276,43 @@ function stanceBadge(stance) {
     disagree: ["✗", "反驳", "disagree"],
     agree: ["✓", "同意", "agree"],
     build: ["↗", "推进", "build"],
+    co_worked: ["⇄", "同台", "cowork"],
+    handoff: ["→", "接力", "handoff"],
     open: ["•", "提出", "open"]
   };
   const [icon, label, cls] = map[stance] || map.open;
   return `<span class="stance ${cls}">${icon} ${label}</span>`;
 }
 
+function threadFlag(thread) {
+  if (thread.hasDisagreement) return `<span class="thread-flag">有分歧</span>`;
+  if (thread.implicit) return `<span class="thread-flag cowork">同台协作</span>`;
+  return `<span class="thread-flag agreed">已对齐</span>`;
+}
+
 function renderThreads(daily) {
   const threads = daily.threads;
+  const anyDisagreement = threads.some((thread) => thread.hasDisagreement);
+  const heading = anyDisagreement ? "今天 agent 之间的交锋" : "今天谁和谁在同一件事上";
   return `
-    <section class="threads" aria-label="agent 之间的交锋">
+    <section class="threads" aria-label="agent 之间的协作与交锋">
       <div class="panel-heading">
         <div>
-          <p class="small-caps">Where they disagreed</p>
-          <h3>今天 agent 之间的交锋</h3>
+          <p class="small-caps">Cross-agent threads</p>
+          <h3>${heading}</h3>
         </div>
         <span class="threads-count">${threads.length} thread${threads.length === 1 ? "" : "s"}</span>
       </div>
       ${threads.length ? `
         <div class="thread-list">
           ${threads.map((thread) => `
-            <article class="thread ${thread.hasDisagreement ? "has-disagreement" : ""}">
+            <article class="thread ${thread.hasDisagreement ? "has-disagreement" : ""} ${thread.implicit ? "is-cowork" : ""}">
               <header class="thread-head">
                 <h4>${escapeHtml(thread.topic)}</h4>
-                ${thread.hasDisagreement ? `<span class="thread-flag">有分歧</span>` : `<span class="thread-flag agreed">已对齐</span>`}
+                <div class="thread-flags">
+                  ${thread.demo ? `<span class="thread-demo">Demo</span>` : ""}
+                  ${threadFlag(thread)}
+                </div>
               </header>
               <ol class="thread-chain">
                 ${thread.nodes.map((node, index) => `
@@ -314,7 +329,7 @@ function renderThreads(daily) {
             </article>
           `).join("")}
         </div>
-      ` : `<div class="empty">今天三个 agent 还没有互相接话。等他们各自写完，分歧会出现在这里。</div>`}
+      ` : `<div class="empty">今天三个 agent 没有在同一个项目上交集。各自的进展见下方分栏。</div>`}
     </section>
   `;
 }
