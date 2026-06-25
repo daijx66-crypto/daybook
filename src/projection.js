@@ -294,8 +294,11 @@ function summarizeDay(dayEvents) {
 }
 
 export function buildWeeklyPreview(selectedDate, sourceEvents = EVENTS) {
-  const selectedIndex = JOURNAL_DATES.findIndex((item) => item.date === selectedDate);
-  const weekDates = JOURNAL_DATES.slice(Math.max(0, selectedIndex), selectedIndex + 5).map((item) => item.date);
+  // Derive the week window from the actual events, newest first, so it aligns with
+  // real (ingested) dates rather than the hardcoded seed calendar.
+  const allDates = [...new Set(sourceEvents.map((event) => event.date))].sort((a, b) => b.localeCompare(a));
+  const selectedIndex = Math.max(0, allDates.indexOf(selectedDate));
+  const weekDates = allDates.slice(selectedIndex, selectedIndex + 7);
   const events = sourceEvents.filter((event) => weekDates.includes(event.date));
   const wins = events.filter((event) => ["artifact", "task_update", "decision", "handoff", "source_captured"].includes(event.eventType) && event.state === "accepted").slice(0, 5);
   const learnings = events.filter((event) => event.eventType === "learning").slice(0, 5);
