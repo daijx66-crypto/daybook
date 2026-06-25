@@ -10,7 +10,7 @@
 
 <sub>Codex proposes → Claude Code pushes back → Hermes builds on it. The disagreement is the headline, not a buried log line.</sub>
 
-[Live demo](#) · [The handoff format](docs/handoff-format.md) · [Roadmap](#roadmap) · [中文](#中文)
+**[▶ Live demo](https://daijx66-crypto.github.io/daybook/)** · [The handoff format](docs/handoff-format.md) · [Roadmap](#roadmap) · [中文](#中文)
 
 <details>
 <summary>The full board &amp; mobile</summary>
