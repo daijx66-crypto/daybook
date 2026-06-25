@@ -36,13 +36,15 @@ Almost every multi-agent tool today fights over **space**: how to run agents in 
 
 > It is not an orchestration framework. It's a **local-first work journal** for your agents — plus an **open handoff format** they can all write to.
 
-## What it does (v1)
+## What it does
 
-- **Three agents, one board.** Codex, Claude Code, and Hermes each get their own voice and column — what they did, learned, suggest for tomorrow, and what's blocking them.
-- **Disagreement is the headline.** When one agent pushes back on another, daybook surfaces the thread front-and-center — who proposed, who *disagreed*, who *built on it* — instead of burying it.
-- **A day you can re-read.** Every night is a page. Switch dates, filter by agent, and watch a weekly view grow out of the daily entries automatically.
-- **An open handoff format.** Agents append plain [JSONL events](docs/handoff-format.md); the UI is just a projection of that log. Bring your own agent.
-- **100% local, by design.** Mock + JSONL fixtures, browser `localStorage`, **no external API calls, no secrets, no background jobs.** What you see is the whole machine.
+- **One page a day.** daybook sediments your scattered AI work into a single **daily report** — an overview, each agent's diary, where they converged or disagreed, and tomorrow's suggestions. Built from your real local activity, never hand-written.
+- **Three agents, three diaries.** Codex, Claude Code, and Hermes each leave a human-readable diary — what they did, learned, and suggest next.
+- **Disagreement & co-work, surfaced.** When agents touch the same project, daybook shows where they pushed back or built on each other — the highest-signal evidence, not a buried log line.
+- **Push the report anywhere (dry-run).** Copy it as Markdown, or preview sending it to Codex / Claude Code / Hermes / Feishu so an agent can review or plan tomorrow. v1 is **copy / dry-run only — no real send, no cron, no secrets.**
+- **Real, local, private.** `npm run ingest:local` reads your own Claude Code / Codex / Hermes activity into a git-ignored file; the public build ships only demo data. The UI is a pure projection of an [open JSONL handoff format](docs/handoff-format.md) — bring your own agent.
+
+> It is **not** an orchestration framework. It's a local-first **daybook**: diary → convergence → daily report, for people already running multiple AI coding agents.
 
 ## Try it in 30 seconds
 
@@ -52,10 +54,18 @@ Almost every multi-agent tool today fights over **space**: how to run agents in 
 open standalone.html      # macOS  (or just double-click it)
 ```
 
-**Or run the source** (zero npm dependencies):
+**Or run the source** (zero runtime dependencies):
 
 ```bash
 npm run dev               # serves on http://127.0.0.1:5177
+```
+
+**See your own data** — ingest your real local agent activity (stays git-ignored, never public):
+
+```bash
+npm run ingest:local      # reads ~/.claude, ~/.codex, ~/Desktop/codex/hermes → data/events.local.jsonl
+npm run check:local       # validate it
+npm run dev               # the board now shows your real days
 ```
 
 ## How it works
@@ -93,15 +103,15 @@ daybook ships v1 as a fully local, mock-data demo on purpose — so the idea is 
 
 | Phase | Goal |
 | --- | --- |
-| **v1** *(now)* | Local-first board: three agents' daily judgment + explicit disagreement, one screen, mock/JSONL data. |
-| **v1.1** | Auto-ingest: one command feeds a running Claude Code / Codex transcript into the board, so the readable thread is a *byproduct* of coding, not a diary you fill in. |
-| **v2** | A real disagreement engine: agents fed genuinely different inputs and personas, plus async "do I still agree with yesterday?" stances. |
-| **v3** | Connect 1–2 real model APIs so agents leave each other opinionated, async replies. Optional Feishu/Notion as a long-term sink. |
-| **v4** *(north star)* | Many agents genuinely collaborating, conversing, and accreting memory in one place — the open format adopted across tools. |
+| **v1** ✅ | Local-first board: daily report + three agent diaries + explicit disagreement / co-work, one screen. |
+| **v1.1** ✅ | `ingest:local` snapshots your real Claude Code / Codex / Hermes activity into the board (git-ignored). |
+| **v2** | Live adapters (`claude -p` stream-json, `codex exec --json`, `hermes sessions export`) so the report is a *byproduct* of coding, not a snapshot. |
+| **v3** | Push the daily report to a real agent for review/planning; async "do I still agree with yesterday?" stances. |
+| **v4** *(north star)* | Many agents genuinely collaborating and accreting memory in one place — the open handoff format adopted across tools. |
 
 ## Status & honesty
 
-Everything in v1 is **mock/local fixtures plus a JSONL sample.** The data structure and projection are real; live agent auto-ingest and real cross-API conversation are on the roadmap above, **not built yet.** No telemetry, no external calls, no secrets read — verify it yourself, it's all in `src/`.
+The **public build ships demo data only.** Run `npm run ingest:local` to see your *real* activity locally — it's written to a **git-ignored** file and never leaves your machine. Push-to-agent is **dry-run / copy only** in v1 (no real send, no cron, no secrets read). Live adapters and real cross-agent replies are on the roadmap above. It's all in `src/` — verify it yourself.
 
 ## License
 
@@ -111,22 +121,18 @@ Everything in v1 is **mock/local fixtures plus a JSONL sample.** The data struct
 
 ## 中文
 
-**daybook** 是一个本地优先的「多 AI Agent 夜间工作日志」。
+**daybook** 是一个本地优先的「多 AI Agent 日报台」:给同时用 Codex、Claude Code、Hermes 的人,把分散的 AI 工作自动沉淀成**每天一页的日报、交接和分歧记录**。
 
-你已经在同时用多个 AI agent 写代码(Claude Code、Codex、还有做调研的第三个),但它们**隔夜不记得彼此**:今晚的 Codex 不知道昨晚的 Claude Code 决定了什么,它们的判断关掉终端就消失,而它们之间的**分歧**——你最该看到的信号——被抹平了。
+定位是「时间维度」,不是「空间维度」:市面上的工具都在抢「怎么让多 agent 并行跑不打架」(编排/看板);daybook 做的是「今天这几个 AI 到底帮我推进了什么、在哪儿分歧、明天怎么接」。
 
-市面上几乎所有多 agent 工具都在抢**空间维度**(怎么让 agent 并行跑不打架);daybook 做的是**时间维度**:让 agent 每天做了什么、学到什么、在哪儿吵起来,变成一份能回看、能沉淀的本地日志。
+> 它不是 agent 编排框架,而是一个本地优先的 **daybook:日记 → 交汇 → 日报**。
 
-> 它不是 agent 编排框架,而是**给 agent 的本地工作日志 + 一套开放的交接格式**。
+**能做什么**
 
-**v1 能做什么**
+- **每天一页日报**:总览 + 三个 agent 各自的日记 + 协作/分歧 + 明日建议,全部由真实本地活动生成,不手写。
+- **三人日记**:Codex / Claude Code / Hermes 各留一段人话——今天做了什么、学到什么、明天建议。
+- **协作与分歧上头条**:同项目同台/反驳的地方被提到主舞台,而不是埋进后台日志。
+- **日报可推送(dry-run)**:复制 Markdown,或预览发给 Codex / Claude Code / Hermes / 飞书。v1 仅复制 / dry-run——不真实发送、不建定时任务、不读密钥。
+- **真实、本地、私密**:`npm run ingest:local` 读你自己的 Claude Code / Codex / Hermes 活动,写进 gitignore 文件;公开版只含演示数据。
 
-- 三个 agent 各有自己的栏目和语气:今天做了什么 / 学到什么 / 明天建议 / 卡在哪。
-- **把分歧放到头条**:谁提出、谁反驳、谁推进,直接占据主舞台,而不是埋进后台。
-- 每天一页,可按日期、按 agent 回看,周报从日报自动长出来。
-- 开放交接格式:agent 只往 [JSONL](docs/handoff-format.md) 里 append,UI 只是日志的投影。
-- **完全本地**:mock / JSONL 数据 + 浏览器 localStorage,不调外部 API、不读密钥、不建定时任务。
-
-**30 秒试用**:直接打开 `standalone.html`,或 `npm run dev` 访问 `http://127.0.0.1:5177`。
-
-路线图见上方 [Roadmap](#roadmap):v1 纯本地 → v1.1 自动喂入真实 transcript → v2 真分歧引擎 → v3 接真实 API 让 agent 互相留言 → v4 多 agent 在一处真正协同。
+**试用**:`npm run ingest:local` 接入你的真实数据 → `npm run dev` 看 `http://127.0.0.1:5177`;或直接打开 `standalone.html`(演示数据)。
