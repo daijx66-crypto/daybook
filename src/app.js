@@ -2,6 +2,7 @@ import { AGENTS, EVENTS } from "./data.js";
 import {
   agentMeta,
   buildDailyProjection,
+  buildDailyReport,
   buildDryRunSyncPlan,
   buildWeeklyPreview,
   dates,
@@ -30,8 +31,10 @@ const state = {
   importedCount: 0,
   lang: prefs.lang,
   theme: prefs.theme,
-  leftOpen: prefs.leftOpen,
   rightOpen: prefs.rightOpen,
+  dateOffset: 0,
+  reportOpen: false,
+  publishTarget: null,
   events: mergeEvents(EVENTS, loadedLocalJournal.events),
   dateList: []
 };
@@ -85,8 +88,18 @@ const I18N = {
     boundaryText: "只读你本机的真实活动（gitignore，不进公开仓库）；不写真实飞书、不调外部 API、不读密钥。",
     tabSources: "信息源", tabConversation: "对话流", tabWeekly: "周报", tabSafety: "安全",
     metricReal: "真实事件", metricProjects: "今日项目", metricAgents: "活跃 agent",
-    prevDay: "前一天", nextDay: "后一天", toggleLeft: "折叠日期栏", toggleRight: "侧栏",
-    latest: "最新", imported: "已导入", real: "条真实", exportJson: "导出 JSON", today: "今天"
+    prevDay: "前一周", nextDay: "后一周", toggleRight: "证据抽屉",
+    latest: "最新", imported: "已导入", real: "条真实", exportJson: "导出 JSON", today: "今天",
+    diaryAcross: "今天在", diaryProjects: "个项目", diarySessions: "次会话", noActivity: "今天没有留下记录。",
+    tomorrowLabel: "明天建议", blockersLabel: "待解决",
+    convHeading: "当天对话流", weeklyDraft: "已生成周报草稿", weeklyPreview: "周报预览", weeklyGenerate: "生成",
+    weeklyEmpty: "暂无内容，等待更多本地事件。", safetyHeading: "可信状态", sourceMapHeading: "信息源索引",
+    feishuMock: "飞书 Mock", localEvidence: "本地证据", noSources: "没有匹配的信息源。",
+    safetyEmpty: "今天没有需要人工确认的安全项。", dryRunHeading: "飞书写入预览", close: "关闭", selectedSource: "选中信息源",
+    reportCap: "今日产出", reportTitle: "今日日报", expand: "展开", collapse: "收起",
+    overview: "今日总览", publish: "推送预览", copyMd: "复制 Markdown", sendTo: "发给",
+    dryRunNote: "v1 仅 dry-run / 复制：不真实发送、不写飞书、不读密钥、不建定时任务。",
+    copied: "已复制", risksLabel: "风险 / 待解决", noReport: "今天还没有可成报的真实活动。", coworkWord: "处协作"
   },
   en: {
     tagline: "Multi-agent nightly work journal", dailyReview: "Daily review · Shanghai",
@@ -99,8 +112,18 @@ const I18N = {
     boundaryText: "Reads only your real local activity (git-ignored, never public); no real Feishu, no external API, no secrets.",
     tabSources: "Sources", tabConversation: "Conversation", tabWeekly: "Weekly", tabSafety: "Safety",
     metricReal: "Real events", metricProjects: "Projects today", metricAgents: "Active agents",
-    prevDay: "Previous day", nextDay: "Next day", toggleLeft: "Toggle dates", toggleRight: "Side panel",
-    latest: "Latest", imported: "Imported", real: " real", exportJson: "Export JSON", today: "Today"
+    prevDay: "Previous week", nextDay: "Next week", toggleRight: "Evidence drawer",
+    latest: "Latest", imported: "Imported", real: " real", exportJson: "Export JSON", today: "Today",
+    diaryAcross: "Across", diaryProjects: "projects", diarySessions: "sessions", noActivity: "No activity logged today.",
+    tomorrowLabel: "Tomorrow", blockersLabel: "Needs attention",
+    convHeading: "Conversation", weeklyDraft: "Weekly draft", weeklyPreview: "Weekly preview", weeklyGenerate: "Generate",
+    weeklyEmpty: "Nothing yet — needs more local events.", safetyHeading: "Trust & safety", sourceMapHeading: "Source index",
+    feishuMock: "Feishu (mock)", localEvidence: "Local evidence", noSources: "No matching source.",
+    safetyEmpty: "Nothing to review today.", dryRunHeading: "Feishu dry-run", close: "Close", selectedSource: "Selected source",
+    reportCap: "Today's output", reportTitle: "Daily report", expand: "Expand", collapse: "Collapse",
+    overview: "Overview", publish: "Publish", copyMd: "Copy Markdown", sendTo: "Send to",
+    dryRunNote: "v1 is dry-run / copy only: no real send, no Feishu writes, no secrets, no cron.",
+    copied: "Copied", risksLabel: "Risks / blockers", noReport: "No real activity to report yet today.", coworkWord: "co-work"
   }
 };
 const STANCE_I18N = {
@@ -153,6 +176,8 @@ async function importLocalFile() {
     // Land on the most recent day that actually has a cross-agent co-work thread,
     // so the first screen shows the soul; fall back to most recent real day.
     state.selectedDate = pickDefaultDate(imported);
+    const idx = state.dateList.findIndex((d) => d.date === state.selectedDate);
+    state.dateOffset = idx < 0 ? 0 : Math.floor(idx / 7) * 7;
     render();
   } catch {
     /* file:// or no local file — expected for the standalone/public build */
@@ -237,18 +262,18 @@ function render() {
   const plan = buildDryRunSyncPlan(state.selectedDate, state.events);
 
   app.innerHTML = `
-    <div class="app-root ${state.leftOpen ? "" : "left-collapsed"} ${state.rightOpen ? "right-open" : "right-collapsed"} ${state.dryRunOpen ? "drawer-open" : ""}">
+    <div class="app-root ${state.rightOpen ? "right-open" : "right-collapsed"} ${state.dryRunOpen ? "drawer-open" : ""}">
       ${renderTopbar(daily)}
       <div class="shell">
-        ${renderSidebar(daily)}
         <main class="workspace">
           ${renderDailyHeader(daily)}
+          ${renderDailyReport(buildDailyReport(state.selectedDate, state.events))}
           ${renderThreads(daily)}
           <section class="agent-grid" aria-label="agents">
             ${daily.agents.map((agent) => renderAgentColumn(agent, daily)).join("")}
           </section>
         </main>
-        <aside class="right-panel" aria-label="side panel">
+        <aside class="right-panel" aria-label="evidence drawer">
           ${renderRightPanel(daily, weekly)}
         </aside>
       </div>
@@ -288,11 +313,17 @@ function renderSidebar(daily) {
   `;
 }
 
+function rightPanelIcon() {
+  // a panel with a divider on the RIGHT (left/right distinction, not up/down)
+  return `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.6" y="2.6" width="12.8" height="10.8" rx="1.6"/><line x1="10.2" y1="2.6" x2="10.2" y2="13.4"/></svg>`;
+}
+
 function renderTopbar(daily) {
   const langLabel = state.lang === "zh" ? "中" : "EN";
   const themeIcon = state.theme === "dark" ? "☾" : "☀";
-  const weekdayLong = new Intl.DateTimeFormat(state.lang === "zh" ? "zh-CN" : "en-US", { timeZone: "Asia/Shanghai", weekday: "long" })
-    .format(new Date(`${state.selectedDate}T12:00:00+08:00`));
+  const maxOffset = Math.max(0, state.dateList.length - 7);
+  const offset = Math.min(state.dateOffset, maxOffset);
+  const week = state.dateList.slice(offset, offset + 7);
   return `
     <header class="topbar">
       <div class="topbar-brand">
@@ -307,22 +338,20 @@ function renderTopbar(daily) {
           <button class="capsule-half" data-action="toggle-theme" title="light / dark">${themeIcon}</button>
         </div>
       </div>
-      <div class="topbar-center">
-        <button class="icon-button" data-action="prev-date" title="${t("prevDay")}">‹</button>
-        <div class="topbar-date">
-          <strong>${fmtDate(state.selectedDate)}</strong>
-          <span>${weekdayLong}</span>
+      <div class="topbar-dates">
+        <button class="icon-button" data-action="prev-week" title="${t("prevDay")}" ${offset >= maxOffset ? "disabled" : ""}>‹</button>
+        <div class="week-strip">
+          ${week.map((item) => `
+            <button class="day-chip ${item.date === state.selectedDate ? "active" : ""}" data-date="${item.date}">
+              <span>${item.weekday}</span>
+              <strong>${fmtDate(item.date)}</strong>
+            </button>
+          `).join("")}
         </div>
-        <button class="icon-button" data-action="next-date" title="${t("nextDay")}">›</button>
+        <button class="icon-button" data-action="next-week" title="${t("nextDay")}" ${offset <= 0 ? "disabled" : ""}>›</button>
       </div>
       <div class="topbar-right">
-        <button class="icon-button ${state.leftOpen ? "on" : ""}" data-action="toggle-left" title="${t("toggleLeft")}">☰</button>
-        <button class="icon-button ${state.rightOpen ? "on" : ""}" data-action="toggle-right" title="${t("toggleRight")}">⊟</button>
-      </div>
-      <div class="mobile-date-strip">
-        ${state.dateList.slice(0, 30).map((item) => `
-          <button class="${item.date === state.selectedDate ? "active" : ""}" data-date="${item.date}">${item.weekday}<span>${item.date.slice(5)}</span></button>
-        `).join("")}
+        <button class="icon-button ${state.rightOpen ? "on" : ""}" data-action="toggle-right" title="${t("toggleRight")}">${rightPanelIcon()}</button>
       </div>
     </header>
   `;
@@ -337,15 +366,113 @@ function renderDailyHeader(daily) {
       <div class="daily-headline">
         <p class="small-caps">${t("dailyReview")}</p>
         <h2>${escapeHtml(daily.title)}</h2>
-        <p class="daily-sub">${escapeHtml(daily.summary)}</p>
       </div>
       <div class="metrics">
         <div class="metric"><strong>${dayEvents.length}</strong><span>${t("metricReal")}</span></div>
         <div class="metric"><strong>${projects}</strong><span>${t("metricProjects")}</span></div>
         <div class="metric"><strong>${activeAgents}</strong><span>${t("metricAgents")}</span></div>
       </div>
+    </section>`;
+}
+
+function clip(s, n = 90) {
+  const t2 = String(s == null ? "" : s);
+  return t2.length > n ? t2.slice(0, n - 1) + "…" : t2;
+}
+
+function stripCount(s) {
+  return String(s).replace(/^\d+\s*个\s*(Claude Code|Codex)\s*会话[：:]\s*/, "").trim();
+}
+
+function composeDiary(agent) {
+  const lines = [...agent.done, ...agent.learned];
+  if (!lines.length && !agent.projects.length) return "";
+  const sep = state.lang === "zh" ? "、" : ", ";
+  const ctx = agent.projects.length
+    ? `${t("diaryAcross")} ${agent.projects.slice(0, 3).join(sep)}${agent.projects.length > 3 ? "…" : ""}（${agent.sessionCount} ${t("diarySessions")}）。`
+    : "";
+  const body = lines.slice(0, 2).map((x) => clip(stripCount(x), 88)).join(" ");
+  return `${ctx}${body}`.trim();
+}
+
+function reportMarkdown(report) {
+  const lines = [`# ${t("reportTitle")} — ${report.title}`, ""];
+  if (report.overview.length) {
+    lines.push(`## ${t("overview")}`);
+    report.overview.forEach((o) => lines.push(`- **${o.agent}**: ${o.text}`));
+    lines.push("");
+  }
+  report.byAgent.forEach((a) => {
+    if (!a.done.length && !a.learned.length && !a.tomorrow.length) return;
+    lines.push(`## ${a.name}`);
+    a.done.slice(0, 4).forEach((x) => lines.push(`- ${x}`));
+    a.tomorrow.slice(0, 3).forEach((x) => lines.push(`- (${t("tomorrowLabel")}) ${x}`));
+    lines.push("");
+  });
+  lines.push(`_generated by daybook · ${report.eventCount} events · dry-run_`);
+  return lines.join("\n");
+}
+
+function publishContent(target, report) {
+  const md = reportMarkdown(report);
+  if (target === "markdown") return md;
+  if (target === "feishu") return `# Feishu dry-run (not written)\n\n${md}`;
+  const cmds = {
+    codex: `codex exec --json "$(cat daybook-report-${report.date}.md)"`,
+    claude_code: `claude -p "$(cat daybook-report-${report.date}.md)"`,
+    hermes: `hermes send --oneshot --file daybook-report-${report.date}.md`
+  };
+  return `# dry-run command (NOT executed)\n${cmds[target] || target}\n\n# daybook-report-${report.date}.md\n${md}`;
+}
+
+function renderDailyReport(report) {
+  const hasContent = report.overview.length > 0;
+  return `
+    <section class="report ${state.reportOpen ? "open" : ""}">
+      <button class="report-head" data-action="toggle-report">
+        <div class="report-head-text">
+          <p class="small-caps">${t("reportCap")}</p>
+          <h3>${t("reportTitle")}</h3>
+        </div>
+        <div class="report-meta">
+          <span>${report.eventCount} ${t("metricReal")}</span>
+          ${report.coworks ? `<span>${report.coworks} ${t("coworkWord")}</span>` : ""}
+          ${report.disagreements ? `<span class="hot">${report.disagreements} ${t("flagDisagree")}</span>` : ""}
+          <span class="chevron">${state.reportOpen ? t("collapse") : t("expand")}</span>
+        </div>
+      </button>
+      ${hasContent
+        ? `<ol class="report-overview">${report.overview.map((o) => `<li style="--accent:${o.accent}"><b>${escapeHtml(o.agent)}</b> ${escapeHtml(clip(o.text, 112))}</li>`).join("")}</ol>`
+        : `<p class="report-empty">${t("noReport")}</p>`}
+      ${state.reportOpen ? renderReportBody(report) : ""}
     </section>
   `;
+}
+
+function renderReportBody(report) {
+  const list = (items) => items.length
+    ? `<ul>${items.slice(0, 5).map((i) => `<li>${escapeHtml(clip(i, 120))}</li>`).join("")}</ul>`
+    : `<p class="muted">—</p>`;
+  const targetLabel = (tg) => tg === "feishu" ? "Feishu" : (AGENTS[tg] ? AGENTS[tg].name : tg);
+  return `
+    <div class="report-body">
+      ${report.tomorrow.length ? `<div class="report-block"><h4>${t("tomorrowLabel")}</h4>${list(report.tomorrow)}</div>` : ""}
+      ${report.risks.length ? `<div class="report-block"><h4>${t("risksLabel")}</h4>${list(report.risks)}</div>` : ""}
+      <div class="report-publish">
+        <h4>${t("publish")}</h4>
+        <div class="publish-row">
+          <button class="secondary compact ${state.publishTarget === "markdown" ? "active" : ""}" data-publish="markdown">${t("copyMd")}</button>
+          ${["codex", "claude_code", "hermes", "feishu"].map((tg) => `<button class="secondary compact ${state.publishTarget === tg ? "active" : ""}" data-publish="${tg}">${t("sendTo")} ${targetLabel(tg)}</button>`).join("")}
+        </div>
+        <p class="dry-note">${t("dryRunNote")}</p>
+        ${state.publishTarget ? `
+          <div class="publish-preview">
+            <pre>${escapeHtml(publishContent(state.publishTarget, report))}</pre>
+            <button class="primary compact" data-copy-publish="${state.publishTarget}">${t("copyMd")}</button>
+          </div>
+        ` : ""}
+      </div>
+    </div>`;
 }
 
 function stanceBadge(stance) {
@@ -460,16 +587,16 @@ function renderTimeline(daily) {
 
 function renderAgentColumn(agent, daily) {
   const meta = AGENTS[agent.agentId];
+  const diary = composeDiary(agent);
+  const mini = (label, items, warn) => items.length
+    ? `<div class="agent-mini ${warn ? "warn" : ""}"><h4>${label}</h4><ul>${items.slice(0, 2).map((x) => `<li>${escapeHtml(clip(stripCount(x), 84))}</li>`).join("")}</ul></div>`
+    : "";
   return `
     <article class="agent-column" style="--accent:${meta.accent}; --soft:${meta.soft}">
-      <div class="agent-head">
-        <h3>${agent.name}</h3>
-        <p>${agent.role}</p>
-      </div>
-      ${renderList(t("done"), agent.done)}
-      ${renderList(t("learned"), agent.learned)}
-      ${renderList(t("tomorrow"), agent.tomorrow)}
-      ${renderList(t("blockers"), agent.blockers)}
+      <div class="agent-head"><h3>${agent.name}</h3><p>${agent.role}</p></div>
+      <p class="agent-diary">${diary ? escapeHtml(diary) : `<span class="muted">${t("noActivity")}</span>`}</p>
+      ${mini(t("tomorrowLabel"), agent.tomorrow, false)}
+      ${mini(t("blockersLabel"), agent.blockers, true)}
       <form class="composer" data-composer-agent="${agent.agentId}">
         <textarea id="note-${agent.agentId}" name="note" placeholder="${t("composer")}"></textarea>
         <button class="primary full-width" type="submit">${t("addNote")}</button>
@@ -518,8 +645,8 @@ function renderSourceIndex(daily) {
   });
   const selected = sourceById(state.selectedSourceId) || allSources[0];
   const groups = {
-    "飞书 Mock": allSources.filter((source) => source.kind.startsWith("feishu")),
-    "本地证据": allSources.filter((source) => !source.kind.startsWith("feishu"))
+    [t("feishuMock")]: allSources.filter((source) => source.kind.startsWith("feishu")),
+    [t("localEvidence")]: allSources.filter((source) => !source.kind.startsWith("feishu"))
   };
 
   return `
@@ -527,7 +654,7 @@ function renderSourceIndex(daily) {
       <div class="panel-heading">
         <div>
           <p class="small-caps">Source Map / Index</p>
-          <h3>第三视角：信息源纵向并行</h3>
+          <h3>${t("sourceMapHeading")}</h3>
         </div>
         <button class="secondary compact" data-action="open-dry-run">Dry-run</button>
       </div>
@@ -560,7 +687,7 @@ function renderSourceIndex(daily) {
           <code>${escapeHtml(selected.pathOrRef)}</code>
           <div class="tag-row">${selected.tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("")}</div>
         </div>
-      ` : `<div class="empty">没有匹配的信息源。</div>`}
+      ` : `<div class="empty">${t("noSources")}</div>`}
     </section>
   `;
 }
@@ -572,7 +699,7 @@ function renderConversation(daily) {
       <div class="panel-heading">
         <div>
           <p class="small-caps">Daily Conversation</p>
-          <h3>当天对话流</h3>
+          <h3>${t("convHeading")}</h3>
         </div>
       </div>
       <div class="segmented thin">
@@ -600,7 +727,7 @@ function renderWeekly(weekly) {
       <div class="panel-heading">
         <div>
           <p class="small-caps">Weekly Preview</p>
-          <h3>${state.generatedWeekly ? "已生成周报草稿" : "周报预览"}</h3>
+          <h3>${state.generatedWeekly ? t("weeklyDraft") : t("weeklyPreview")}</h3>
         </div>
         <button class="primary compact" data-action="generate-weekly">Generate</button>
       </div>
@@ -617,7 +744,7 @@ function renderWeeklyBlock(title, items) {
   return `
     <div class="weekly-block">
       <h4>${title}</h4>
-      <ul>${(items.length ? items : ["暂无内容，等待更多本地事件。"]).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+      <ul>${(items.length ? items : [t("weeklyEmpty")]).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
     </div>
   `;
 }
@@ -638,7 +765,7 @@ function renderSafety(daily) {
       <div class="panel-heading">
         <div>
           <p class="small-caps">Safety Review</p>
-          <h3>第二视角：可信状态</h3>
+          <h3>${t("safetyHeading")}</h3>
         </div>
       </div>
       <div class="safety-grid">
@@ -650,7 +777,7 @@ function renderSafety(daily) {
             <span>${stateLabel(item.state)}</span>
             <strong>${escapeHtml(item.title)}</strong>
           </button>
-        `).join("") : `<div class="empty">今天没有需要人工确认的安全项。</div>`}
+        `).join("") : `<div class="empty">${t("safetyEmpty")}</div>`}
       </div>
       ${selected ? `
         <div class="trace-detail">
@@ -671,9 +798,9 @@ function renderDryRunDrawer(plan) {
       <div class="drawer-head">
         <div>
           <p class="small-caps">External Sync Dry-run</p>
-          <h3>飞书写入预览</h3>
+          <h3>${t("dryRunHeading")}</h3>
         </div>
-        <button class="icon-button" data-action="close-dry-run" title="关闭">×</button>
+        <button class="icon-button" data-action="close-dry-run" title="${t("close")}">×</button>
       </div>
       <div class="dry-alert">
         <strong>Local-only simulation</strong>
@@ -737,6 +864,26 @@ function bindEvents() {
     });
   });
 
+  document.querySelectorAll("[data-publish]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const tg = button.dataset.publish;
+      state.publishTarget = state.publishTarget === tg ? null : tg;
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-copy-publish]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const report = buildDailyReport(state.selectedDate, state.events);
+      const text = publishContent(button.dataset.copyPublish, report);
+      try {
+        navigator.clipboard.writeText(text);
+        button.textContent = t("copied");
+        setTimeout(() => { button.textContent = t("copyMd"); }, 1200);
+      } catch { /* clipboard blocked (file://) — preview is still selectable */ }
+    });
+  });
+
   document.querySelectorAll("[data-conversation-filter]").forEach((button) => {
     button.addEventListener("click", () => {
       state.conversationFilter = button.dataset.conversationFilter;
@@ -790,19 +937,14 @@ function bindEvents() {
 }
 
 function handleAction(action) {
-  const dateItems = state.dateList;
-  const index = dateItems.findIndex((item) => item.date === state.selectedDate);
-  if (action === "prev-date") {
-    state.selectedDate = dateItems[Math.min(dateItems.length - 1, index + 1)].date;
-  }
-  if (action === "next-date") {
-    state.selectedDate = dateItems[Math.max(0, index - 1)].date;
-  }
+  const maxOffset = Math.max(0, state.dateList.length - 7);
+  if (action === "prev-week") state.dateOffset = Math.min(maxOffset, state.dateOffset + 7);
+  if (action === "next-week") state.dateOffset = Math.max(0, state.dateOffset - 7);
   if (action === "open-dry-run") state.dryRunOpen = true;
   if (action === "close-dry-run") state.dryRunOpen = false;
+  if (action === "toggle-report") state.reportOpen = !state.reportOpen;
   if (action === "toggle-lang") { state.lang = state.lang === "zh" ? "en" : "zh"; persistPrefs(); }
   if (action === "toggle-theme") { state.theme = state.theme === "light" ? "dark" : "light"; persistPrefs(); }
-  if (action === "toggle-left") { state.leftOpen = !state.leftOpen; persistPrefs(); }
   if (action === "toggle-right") { state.rightOpen = !state.rightOpen; persistPrefs(); }
   if (action === "generate-weekly") {
     state.generatedWeekly = true;

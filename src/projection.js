@@ -61,6 +61,8 @@ function agentProjection(agentId, dayEvents) {
     learned: [],
     tomorrow: [],
     blockers: [],
+    projects: [],
+    sessionCount: 0,
     sourceIds: [],
     events: ownEvents.map((event) => event.eventId)
   };
@@ -72,14 +74,15 @@ function agentProjection(agentId, dayEvents) {
     if (bucket === "learned") pushLimited(projection.learned, line);
     if (bucket === "tomorrow") pushLimited(projection.tomorrow, line);
     if (bucket === "blockers") pushLimited(projection.blockers, line);
+    const proj = event.payload.project;
+    if (proj && proj !== "后台 / 杂项") {
+      pushLimited(projection.projects, proj);
+      projection.sessionCount += event.payload.sessionCount || 1;
+    }
     event.sourceIds.forEach((sourceId) => pushLimited(projection.sourceIds, sourceId));
   });
 
-  if (projection.done.length === 0) projection.done.push("今天没有 accepted 的完成项，保留空白以避免伪造同步。");
-  if (projection.learned.length === 0) projection.learned.push("今天还没有写入新的学习条目。");
-  if (projection.tomorrow.length === 0) projection.tomorrow.push("明天建议从未解决项和信息源补齐开始。");
-  if (projection.blockers.length === 0) projection.blockers.push("无明确阻塞。");
-
+  // No fake placeholders — an empty agent is rendered honestly by the view (i18n).
   return projection;
 }
 
@@ -290,6 +293,34 @@ function summarizeDay(dayEvents) {
   const pending = dayEvents.filter((event) => event.state === "pending_sync").length;
   const conflicts = dayEvents.filter((event) => event.state === "conflict").length;
   return `共 ${dayEvents.length} 条本地事件，${accepted} 条进入日报正文，${pending} 条等待 dry-run 预览，${conflicts} 条需要判断。`;
+}
+
+// The daily report — daybook's main product. A readable, copyable, pushable
+// one-page draft built purely from the day's events (never hand-written).
+export function buildDailyReport(date, sourceEvents = EVENTS) {
+  const daily = buildDailyProjection(date, sourceEvents);
+  const dayEvents = eventsForDate(date, sourceEvents);
+  const projectsSet = new Set(dayEvents.map((e) => e.payload.project).filter((p) => p && p !== "后台 / 杂项"));
+  const sessionTotal = dayEvents.reduce((sum, e) => sum + (e.payload.sessionCount || 1), 0);
+  // Overview = the most substantive lines across all agents (longest = most signal).
+  const pool = daily.agents.flatMap((a) => [...a.done, ...a.learned].map((text) => ({ agent: a.name, agentId: a.agentId, accent: a.accent, text })));
+  const overview = pool.sort((x, y) => y.text.length - x.text.length).slice(0, 5);
+  return {
+    date,
+    title: daily.title,
+    eventCount: dayEvents.length,
+    projectCount: projectsSet.size,
+    agentCount: new Set(dayEvents.map((e) => e.sourceAgent)).size,
+    sessionTotal,
+    overview,
+    byAgent: daily.agents,
+    threads: daily.threads,
+    tomorrow: daily.agents.flatMap((a) => a.tomorrow),
+    risks: daily.agents.flatMap((a) => a.blockers),
+    disagreements: daily.threads.filter((t) => t.hasDisagreement).length,
+    coworks: daily.threads.filter((t) => t.implicit).length,
+    publishTargets: ["markdown", "codex", "claude_code", "hermes", "feishu"]
+  };
 }
 
 export function buildWeeklyPreview(selectedDate, sourceEvents = EVENTS) {
