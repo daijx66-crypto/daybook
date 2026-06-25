@@ -18,7 +18,7 @@ const ROOT = resolve(import.meta.dirname, "..");
 const OUT = join(ROOT, "data", "events.local.jsonl");
 
 // ---------- helpers ----------
-function readHead(path, bytes = 65536) {
+function readHead(path, bytes = 220000) {
   const fd = openSync(path, "r");
   try {
     const buf = Buffer.alloc(bytes);
@@ -48,8 +48,21 @@ function redact(text) {
   return s;
 }
 
+// Strip injected scaffolding (env context, system reminders, xml-ish tags) so a
+// real instruction survives even when the agent wrapped it.
+function stripTags(s) {
+  return String(s)
+    .replace(/<environment_context>[\s\S]*?<\/environment_context>/gi, " ")
+    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, " ")
+    .replace(/<command-[\s\S]*?>/gi, " ")
+    .replace(/<[^>\n]{1,48}>/g, " ")
+    .replace(/Caveat:[^\n]*/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function clean(text, max) {
-  const s = redact(text).replace(/\s+/g, " ").trim();
+  const s = redact(stripTags(text)).replace(/\s+/g, " ").trim();
   return s.length > max ? s.slice(0, max - 1) + "…" : s;
 }
 
@@ -71,16 +84,24 @@ function foldProject(p) {
   return isNoiseProject(p) ? FOLD_LABEL : p;
 }
 
-// Reject injected system prompts / tool scaffolding so summaries read like a human
-// instruction, not "You are a Claude-Mem…" leaking onto the page.
-const NOISE_TEXT = /^(you are\b|you're a\b|<system|<command|<local-command|<environment|caveat:|hello memory agent|\[system|this session is being continued)/i;
+// A piece reads like a human instruction once scaffolding is stripped.
 function looksHuman(s) {
-  const t = String(s).trim();
-  if (t.length < 3) return false;
-  if (t.startsWith("<")) return false; // tool scaffolding / observer tags
-  if (NOISE_TEXT.test(t)) return false;
-  if (/claude-mem|continuing to observe|you are a /i.test(t)) return false;
+  const t = stripTags(s);
+  if (t.length < 4) return false;
+  if (/^#?\s*(AGENTS|CLAUDE|GEMINI|README)\.md/i.test(t)) return false; // injected repo instructions
+  if (/instructions for \/|行为准则/i.test(t)) return false;
+  if (/Asia\/Shanghai/.test(t) && t.length < 130) return false; // env_context residue
+  if (/^(you are\b|you're a\b|hello memory agent|this session is being continued|please continue)/i.test(t)) return false;
+  if (/claude-mem|continuing to observe/i.test(t)) return false;
   return true;
+}
+
+function textPieces(content) {
+  if (typeof content === "string") return [content];
+  if (Array.isArray(content)) {
+    return content.map((p) => (p == null ? "" : (typeof p === "string" ? p : (p.text || "")))).filter(Boolean);
+  }
+  return [];
 }
 
 // Re-bucket flat task_update into the journal's four lanes by content.
@@ -100,11 +121,8 @@ function firstUserText(chunk) {
     const msg = obj.message || obj.payload || obj;
     const role = msg.role || obj.role || obj.type;
     if (role !== "user") continue;
-    const content = msg.content ?? msg.text ?? obj.text;
-    if (typeof content === "string" && content.trim() && looksHuman(content)) return content;
-    if (Array.isArray(content)) {
-      const t = content.find((p) => p && (p.type === "text" || typeof p.text === "string"));
-      if (t && t.text && looksHuman(t.text)) return t.text;
+    for (const piece of textPieces(msg.content ?? msg.text ?? obj.text)) {
+      if (looksHuman(piece)) return stripTags(piece);
     }
   }
   return "";
@@ -136,7 +154,7 @@ function addSession(agg, date, project, title) {
 const baseEnvelope = { schemaVersion: "1.0", workspace: "daybook-local", sourceInstance: "local-import" };
 const out = [];
 const usedIds = new Set();
-function pushEvent({ id, date, agent, type, time, title, summary, project, tags, secret }) {
+function pushEvent({ id, date, agent, type, time, title, summary, project, tags, secret, sessionCount }) {
   let eid = id;
   let n = 1;
   while (usedIds.has(eid)) eid = `${id}-${n++}`;
@@ -154,9 +172,10 @@ function pushEvent({ id, date, agent, type, time, title, summary, project, tags,
     state: "accepted",
     payload: {
       title: clean(title, 90),
-      summary: clean(summary, 220),
+      summary: clean(summary, 240),
       details: "",
       project: clean(project, 60),
+      sessionCount: sessionCount || 1,
       status: "done",
       priority: "medium",
       tags: tags || [],
@@ -196,8 +215,8 @@ function ingestClaude() {
       id: `cc-${date}-${slug(project)}`,
       date, agent: "claude_code", type: classifyType(samples.join(" ")), time: "21:30",
       title: project,
-      summary: `${count} 个 Claude Code 会话` + (project !== FOLD_LABEL && samples.length ? `：${samples.map((s) => clean(s, 60)).join("；")}` : ""),
-      project, tags: ["claude-code", "real"], secret: sec
+      summary: `${count} 个 Claude Code 会话` + (project !== FOLD_LABEL && samples.length ? `：${samples.map((s) => clean(s, 70)).join("；")}` : ""),
+      project, tags: ["claude-code", "real"], secret: sec, sessionCount: count
     });
   }
   return agg.size;
@@ -233,8 +252,8 @@ function ingestCodex() {
       id: `cx-${date}-${slug(project)}`,
       date, agent: "codex", type: classifyType(samples.join(" ")), time: "21:00",
       title: project,
-      summary: `${count} 个 Codex 会话` + (project !== FOLD_LABEL && samples.length ? `：${samples.map((s) => clean(s, 60)).join("；")}` : ""),
-      project, tags: ["codex", "real"]
+      summary: `${count} 个 Codex 会话` + (project !== FOLD_LABEL && samples.length ? `：${samples.map((s) => clean(s, 70)).join("；")}` : ""),
+      project, tags: ["codex", "real"], sessionCount: count
     });
   }
   return agg.size;

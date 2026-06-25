@@ -22,8 +22,8 @@ This is the thing worth standardizing. The dashboard is just a projection of it.
   "traceId": "trace-...",                    // ties back to the originating run
   "date": "2026-06-25",                      // YYYY-MM-DD, the journal page
   "sourceAgent": "codex",                    // codex | claude_code | hermes
-  "sourceInstance": "future-cli",            // mock-ui | local-fixture | future-cli | future-mcp
-  "workspace": "agent-sync-demo",            // project/workspace id
+  "sourceInstance": "future-cli",            // mock-ui | local-fixture | future-cli | future-mcp | local-import
+  "workspace": "daybook",                    // any non-empty project/workspace id
   "eventType": "decision",                   // see vocabulary below
   "occurredAt": "2026-06-25T22:12:00+08:00", // ISO 8601, offset required
   "observedAt": "2026-06-25T22:12:05+08:00",
@@ -86,12 +86,19 @@ npm run check:jsonl   # or: node scripts/validate-jsonl.mjs data/events.local.js
 
 ## Validation contract
 
-`scripts/validate-jsonl.mjs` enforces the current v1.0 rules: required fields and
-types, unique `eventId` / `idempotencyKey`, Asia/Shanghai offsets, known
-`sourceAgent` / `sourceInstance` / `eventType` / `state`, `sourceIds` that resolve
-against the source index, and a hard reject of token- or `api_key=`-shaped
-strings. `parentEventId` and `payload.stance` are optional and forward-compatible.
+There are two write paths, validated by the same rules:
 
-> v1.0 pins `workspace` to `agent-sync-demo` and the agent set to
-> `codex / claude_code / hermes`. Generalizing both is the first step toward
-> bring-your-own-agent (see the project roadmap).
+- **Public sample** — `data/events.sample.jsonl`, checked by `npm run check:jsonl`.
+- **Private local ingest** — `data/events.local.jsonl` (git-ignored), produced by
+  `npm run ingest:local` and checked by `npm run check:local`. It uses
+  `sourceInstance: "local-import"` and your real workspace names.
+
+`scripts/validate-jsonl.mjs` enforces: required fields and types, unique
+`eventId` / `idempotencyKey`, Asia/Shanghai offsets, known `sourceAgent` /
+`sourceInstance` / `eventType` / `state`, any non-empty `workspace`, `sourceIds`
+that resolve against the source index, and a hard reject of token- or
+`api_key=`-shaped strings. `parentEventId` and `payload.stance` are optional and
+forward-compatible.
+
+> v1.0 still pins the agent set to `codex / claude_code / hermes`. Generalizing it
+> is the first step toward bring-your-own-agent (see the project roadmap).

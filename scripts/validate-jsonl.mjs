@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { SOURCES } from "../src/data.js";
 
 const allowedAgents = new Set(["codex", "claude_code", "hermes"]);
-const allowedInstances = new Set(["mock-ui", "local-fixture", "future-cli", "future-mcp"]);
+const allowedInstances = new Set(["mock-ui", "local-fixture", "future-cli", "future-mcp", "local-import"]);
 const allowedStates = new Set(["accepted", "duplicate", "conflict", "quarantined", "redacted", "pending_sync", "failed"]);
 const allowedTypes = new Set([
   "heartbeat",
@@ -70,7 +70,7 @@ function validateEvent(event, lineNumber) {
   assert.match(event.date, /^\d{4}-\d{2}-\d{2}$/, `${prefix}: date format`);
   assert.ok(allowedAgents.has(event.sourceAgent), `${prefix}: sourceAgent`);
   assert.ok(allowedInstances.has(event.sourceInstance), `${prefix}: sourceInstance`);
-  assert.equal(event.workspace, "agent-sync-demo", `${prefix}: workspace`);
+  assert.ok(typeof event.workspace === "string" && event.workspace.trim().length > 0, `${prefix}: workspace`);
   assert.ok(allowedTypes.has(event.eventType), `${prefix}: eventType`);
   assert.ok(allowedStates.has(event.state), `${prefix}: state`);
   assert.match(event.occurredAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+08:00$/, `${prefix}: occurredAt must be Asia/Shanghai`);

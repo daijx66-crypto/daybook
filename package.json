@@ -1,5 +1,5 @@
 {
-  "name": "agent-sync-demo",
+  "name": "daybook",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -7,6 +7,8 @@
     "dev": "python3 -m http.server 5177 --bind 127.0.0.1",
     "check": "node scripts/check-demo.mjs",
     "check:jsonl": "node scripts/validate-jsonl.mjs data/events.sample.jsonl",
+    "ingest:local": "node scripts/ingest-local.mjs",
+    "check:local": "node scripts/validate-jsonl.mjs data/events.local.jsonl",
     "build:standalone": "node scripts/build-standalone.mjs",
     "shots": "node scripts/verify-playwright.mjs"
   },
