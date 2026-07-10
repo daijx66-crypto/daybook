@@ -4,6 +4,11 @@ node_modules/
 # local / generated data (never commit real agent journals)
 data/events.local.jsonl
 data/*.local.jsonl
+data/*.local.json
+reports/daily/*.md
+reports/quality/*.local.md
+reports/recent/*.local.md
+reports/taxonomy/*.local.md
 
 # OS
 .DS_Store
@@ -22,3 +27,6 @@ data/*.local.jsonl
 # playwright
 test-results/
 playwright-report/
+
+# skin exploration mockups (throwaway)
+skin-demos/

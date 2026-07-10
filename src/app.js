@@ -7,7 +7,9 @@ import {
   buildDryRunSyncPlan,
   buildWeeklyPreview,
   dates,
+  displayLine,
   getSources,
+  isDisplayNoise,
   sourceById,
   stateLabel
 } from "./projection.js";
@@ -15,6 +17,8 @@ import {
 const app = document.querySelector("#app");
 const JOURNAL_STORAGE_KEY = "agent-sync-demo.local-events.v1";
 const LOCAL_IMPORT_FILE = "./data/events.local.jsonl";
+const HUMAN_REPORT_FILE = "./data/daily-human-report.local.json";
+const QUALITY_REPORT_FILE = "./data/report-quality.local.json";
 const PREFS_KEY = "daybook.prefs.v1";
 const loadedLocalJournal = loadLocalJournal();
 const prefs = loadPrefs();
@@ -39,24 +43,16 @@ const state = {
   view: prefs.view,
   openAgents: new Set(),
   reportGen: false,
+  humanReport: null,
+  qualityReport: null,
   events: mergeEvents(EVENTS, loadedLocalJournal.events),
   dateList: []
 };
 
-// Most recent real date that has a same-project ≥2-agent co-work thread.
+// Opening daybook should show today / the newest real journal day. Cross-agent
+// convergence is valuable, but it should not make the app land on yesterday.
 function pickDefaultDate(imported) {
-  const byDate = {};
-  imported.forEach((e) => {
-    const p = e.payload.project;
-    if (!p || p === "后台 / 杂项") return;
-    (byDate[e.date] ||= {});
-    (byDate[e.date][p] ||= new Set()).add(e.sourceAgent);
-  });
   const allDates = [...new Set(imported.map((e) => e.date))].sort().reverse();
-  for (const d of allDates) {
-    const projs = byDate[d] || {};
-    if (Object.values(projs).some((set) => set.size >= 2)) return d;
-  }
   return allDates[0];
 }
 
@@ -105,7 +101,8 @@ const I18N = {
     dryRunNote: "v1 仅 dry-run / 复制：不真实发送、不写飞书、不读密钥、不建定时任务。",
     copied: "已复制", risksLabel: "风险 / 待解决", noReport: "今天还没有可成报的真实活动。", coworkWord: "处协作",
     allAgents: "全部", wWins: "完成", wLearnings: "学到", wRisks: "风险 / 冲突", wNext: "下一步",
-    mechDraft: "机械草稿 · 未经 LLM 概括", mechDraftHint: "v1 离线为机械抽取；点「生成」让选定 agent 真正概括（dry-run）",
+    mechDraft: "人话版", mechDraftHint: "从本地事件整理成可读日报；每日自动任务会继续改写这份报告。",
+    sparseHint: "今天数据较少，建议查看最近活跃日报告。",
     summarizer: "摘要器", generate: "生成", expandRaw: "展开原话 ▾", collapseRaw: "收起原话 ▴",
     viewReport: "日报", viewCollab: "协作",
     collabCap: "今日协作", collabHeading: "今天谁在推进什么",
@@ -136,7 +133,8 @@ const I18N = {
     dryRunNote: "v1 is dry-run / copy only: no real send, no Feishu writes, no secrets, no cron.",
     copied: "Copied", risksLabel: "Risks / blockers", noReport: "No real activity to report yet today.", coworkWord: "co-work",
     allAgents: "All", wWins: "Wins", wLearnings: "Learnings", wRisks: "Risks / conflicts", wNext: "Next actions",
-    mechDraft: "Mechanical draft · not LLM-summarized", mechDraftHint: "v1 offline = extractive; click Generate to have the chosen agent summarize (dry-run)",
+    mechDraft: "Human-readable", mechDraftHint: "Prepared from local events; the nightly automation rewrites this report.",
+    sparseHint: "Sparse latest day. Use the recent active-days report.",
     summarizer: "Summarizer", generate: "Generate", expandRaw: "Show raw ▾", collapseRaw: "Hide raw ▴",
     viewReport: "Report", viewCollab: "Collab",
     collabCap: "Today's collaboration", collabHeading: "Who advanced what today",
@@ -196,9 +194,37 @@ async function importLocalFile() {
     state.selectedDate = pickDefaultDate(imported);
     const idx = state.dateList.findIndex((d) => d.date === state.selectedDate);
     state.dateOffset = idx < 0 ? 0 : Math.floor(idx / 7) * 7;
+    await importHumanReport();
+    await importQualityReport();
     render();
   } catch {
     /* file:// or no local file — expected for the standalone/public build */
+  }
+}
+
+async function importHumanReport() {
+  try {
+    const res = await fetch(HUMAN_REPORT_FILE, { cache: "no-store" });
+    if (!res.ok) return;
+    const report = await res.json();
+    if (report && report.schemaVersion === "1.0" && report.date) {
+      state.humanReport = report;
+    }
+  } catch {
+    /* expected when no local generated report exists */
+  }
+}
+
+async function importQualityReport() {
+  try {
+    const res = await fetch(QUALITY_REPORT_FILE, { cache: "no-store" });
+    if (!res.ok) return;
+    const report = await res.json();
+    if (report && report.schemaVersion === "1.0" && report.latestDate) {
+      state.qualityReport = report;
+    }
+  } catch {
+    /* expected when no local quality report exists */
   }
 }
 
@@ -291,7 +317,7 @@ function render() {
               ${renderDailyReport(buildDailyReport(state.selectedDate, state.events))}
               ${renderThreads(daily)}
               <section class="agent-grid" aria-label="agents">
-                ${daily.agents.map((agent) => renderAgentColumn(agent, daily)).join("")}
+                ${daily.agents.filter(hasAgentContent).map((agent) => renderAgentColumn(agent, daily)).join("")}
               </section>
             `}
         </main>
@@ -387,8 +413,9 @@ function renderTopbar(daily) {
 
 function renderDailyHeader(daily) {
   const dayEvents = state.events.filter((event) => event.date === state.selectedDate);
-  const projects = new Set(dayEvents.map((e) => e.payload.project).filter((p) => p && p !== "后台 / 杂项")).size;
-  const activeAgents = new Set(dayEvents.map((e) => e.sourceAgent)).size;
+  const meaningfulEvents = dayEvents.filter((event) => !isDisplayNoise(event) && displayLine(event));
+  const projects = new Set(meaningfulEvents.map((e) => e.payload.project).filter(Boolean)).size;
+  const activeAgents = new Set(meaningfulEvents.map((e) => e.sourceAgent)).size;
   return `
     <section class="daily-header">
       <div class="daily-headline">
@@ -414,13 +441,39 @@ function stripCount(s) {
 
 function composeDiary(agent) {
   const lines = [...agent.done, ...agent.learned];
-  if (!lines.length && !agent.projects.length) return "";
+  if (!lines.length) return "";
   const sep = state.lang === "zh" ? "、" : ", ";
   const ctx = agent.projects.length
     ? `${t("diaryAcross")} ${agent.projects.slice(0, 3).join(sep)}${agent.projects.length > 3 ? "…" : ""}（${agent.sessionCount} ${t("diarySessions")}）。`
     : "";
   const body = lines.slice(0, 2).map((x) => clip(stripCount(x), 88)).join(" ");
   return `${ctx}${body}`.trim();
+}
+
+function activeHumanReport() {
+  return state.humanReport?.date === state.selectedDate ? state.humanReport : null;
+}
+
+function humanAgent(agentId) {
+  return activeHumanReport()?.agents?.find((agent) => agent.agentId === agentId) || null;
+}
+
+function humanActionsForAgent(agentId) {
+  const items = activeHumanReport()?.items || [];
+  return items.flatMap((item) =>
+    (item.agentActions || [])
+      .filter((action) => action.agentId === agentId)
+      .map((action) => ({
+        folder: item.folder || item.title,
+        text: action.text
+      }))
+  );
+}
+
+function hasAgentContent(agent) {
+  const human = humanAgent(agent.agentId);
+  if (human) return true;
+  return Boolean(agent.done.length || agent.learned.length || agent.tomorrow.length || agent.blockers.length);
 }
 
 function threadSentence(thread) {
@@ -451,8 +504,60 @@ function reportMarkdown(report) {
   return lines.join("\n");
 }
 
+function humanMarkdown(human) {
+  const lines = [
+    `# ${human.date} daybook 人话日报`,
+    "",
+    human.headline || "",
+    "",
+    human.overview || "",
+    "",
+    "## 按项目看"
+  ];
+  if (human.items?.length) {
+    human.items.forEach((item) => {
+      lines.push(`${item.index}. **${item.folder || item.title}**（${item.collaborationLabel || "单 agent 推进"} / ${item.statusLabel || humanStatusLabel(item.status)}）：${item.plain}`);
+      lines.push(`   - 今日推进：${item.todayProgress?.[0] || "暂无明确推进记录。"}`);
+      lines.push(`   - 关键判断：${item.keyJudgments?.[0] || "暂无新的关键判断。"}`);
+      lines.push(`   - 明天注意：${item.tomorrowNotes?.[0] || "暂无明确明天事项。"}`);
+      lines.push(`   - 需要用户介入：${item.needsUser?.[0] || "暂无需要用户介入的卡点。"}`);
+      lines.push(`   - 证据：${item.evidenceCount || 0} 条有效事件；agent：${(item.agents || []).join("、") || "未知"}`);
+      (item.agentActions || []).forEach((action) => {
+        lines.push(`   - ${action.agent}：${action.text}`);
+      });
+    });
+  } else {
+    lines.push("- 暂无可读记录。");
+  }
+  if (human.agents?.length) {
+    lines.push("", "## 按 agent 看");
+    human.agents.forEach((agent) => lines.push(`- **${agent.name}**：${agent.plain}`));
+  }
+  lines.push("", "## 需要继续确认");
+  (human.risks?.length ? human.risks : ["暂无需要用户介入的卡点。"]).forEach((risk) => lines.push(`- ${risk}`));
+  lines.push("", "## 明天可以接着做");
+  (human.next?.length ? human.next : ["暂无明确明天事项。"]).forEach((next) => lines.push(`- ${next}`));
+  lines.push(
+    "",
+    "## 证据计数",
+    `- 原始本地事件：${human.evidence?.rawEvents || 0}`,
+    `- 进入日报正文：${human.evidence?.usefulEvents || 0}`,
+    `- 协作项目：${human.evidence?.collaborationProjects || 0}`,
+    `- 真实分歧项目：${human.evidence?.disagreementProjects || 0}`,
+    "- 外部写入：0"
+  );
+  return lines.join("\n");
+}
+
+function humanStatusLabel(status) {
+  if (status === "needs_attention") return "待确认";
+  if (status === "in_progress") return "推进中";
+  return "已完成";
+}
+
 function publishContent(target, report) {
-  const md = reportMarkdown(report);
+  const human = state.humanReport?.date === report.date ? state.humanReport : null;
+  const md = human ? humanMarkdown(human) : reportMarkdown(report);
   if (target === "markdown") return md;
   if (target === "feishu") return `# Feishu dry-run (not written)\n\n${md}`;
   const cmds = {
@@ -483,8 +588,11 @@ function renderReportSection(sec) {
 }
 
 function renderDailyReport(report) {
+  const human = state.humanReport?.date === report.date ? state.humanReport : null;
+  const quality = state.qualityReport?.latestDate === report.date ? state.qualityReport : null;
   const hasContent = report.sections.length > 0;
-  const summarizers = ["claude_code", "codex", "hermes"];
+  const footerNext = human ? (human.next || []) : report.tomorrow;
+  const footerRisks = human ? (human.risks || []) : report.risks;
   const list = (items) => `<ul>${items.slice(0, 5).map((i) => `<li>${escapeHtml(clip(stripCount(i), 120))}</li>`).join("")}</ul>`;
   return `
     <section class="report">
@@ -494,15 +602,11 @@ function renderDailyReport(report) {
           <h3>${t("reportTitle")}</h3>
           <span class="report-badge" title="${t("mechDraftHint")}">${t("mechDraft")}</span>
         </div>
-        <div class="report-author">
-          <span class="report-author-label">${t("summarizer")}</span>
-          <div class="segmented thin summarizer">
-            ${summarizers.map((s) => `<button class="${state.summarizer === s ? "active" : ""}" data-summarizer="${s}">${AGENTS[s].name}</button>`).join("")}
-          </div>
-          <button class="primary compact" data-action="gen-report">${t("generate")}</button>
-        </div>
       </div>
-      ${hasContent ? `<div class="report-sections">${report.sections.map(renderReportSection).join("")}</div>` : `<p class="report-empty">${t("noReport")}</p>`}
+      ${quality?.latestDay?.sparse ? renderQualityHint(quality) : ""}
+      ${human ? renderHumanReport(human) : ""}
+      ${!human && hasContent ? `<div class="report-sections">${report.sections.map(renderReportSection).join("")}</div>` : ""}
+      ${!human && !hasContent ? `<p class="report-empty">${t("noReport")}</p>` : ""}
       ${state.reportGen ? `
         <div class="publish-preview report-gen">
           <p class="dry-note">${t("dryRunNote")}</p>
@@ -510,8 +614,8 @@ function renderDailyReport(report) {
           <button class="primary compact" data-copy-publish="${state.summarizer}">${t("copyMd")}</button>
         </div>` : ""}
       <div class="report-footer">
-        ${report.tomorrow.length ? `<div class="report-block"><h4>${t("tomorrowLabel")}</h4>${list(report.tomorrow)}</div>` : ""}
-        ${report.risks.length ? `<div class="report-block"><h4>${t("risksLabel")}</h4>${list(report.risks)}</div>` : ""}
+        ${footerNext.length ? `<div class="report-block"><h4>${t("tomorrowLabel")}</h4>${list(footerNext)}</div>` : ""}
+        ${footerRisks.length ? `<div class="report-block"><h4>${t("risksLabel")}</h4>${list(footerRisks)}</div>` : ""}
         <div class="report-publish">
           <button class="secondary compact ${state.publishTarget === "markdown" ? "active" : ""}" data-publish="markdown">${t("copyMd")}</button>
           <button class="secondary compact ${state.publishTarget === "feishu" ? "active" : ""}" data-publish="feishu">Feishu dry-run</button>
@@ -519,6 +623,57 @@ function renderDailyReport(report) {
         </div>
       </div>
     </section>
+  `;
+}
+
+function renderQualityHint(quality) {
+  return `
+    <div class="quality-hint">
+      <strong>${t("sparseHint")}</strong>
+      <span>${escapeHtml(String(quality.latestDay.usefulEvents || 0))} 条有效事件 · ${escapeHtml(String(quality.latestDay.projectCount || 0))} 个项目 · ${escapeHtml(quality.recommendation || "recent-active-days")}</span>
+    </div>
+  `;
+}
+
+function renderHumanReport(human) {
+  const section = (label, values, emptyText) =>
+    `<div class="human-section-line"><b>${label}</b><span>${escapeHtml(values?.[0] || emptyText)}</span></div>`;
+  return `
+    <div class="human-report">
+      <p class="human-overview">${escapeHtml(human.headline)} ${escapeHtml(human.overview || "")}</p>
+      <ol class="human-items">
+        ${(human.items || []).map((item) => `
+          <li>
+            <div class="human-item-head">
+              <span class="folder-pill">${escapeHtml(item.folder || item.title)}</span>
+              <span class="human-status">${escapeHtml(item.collaborationLabel || "单 agent 推进")}</span>
+              <span class="human-status">${escapeHtml(item.statusLabel || humanStatusLabel(item.status))}</span>
+            </div>
+            <p>${escapeHtml(item.plain)}</p>
+            <div class="human-section-lines">
+              ${section("今日推进", item.todayProgress, "暂无明确推进记录。")}
+              ${section("关键判断", item.keyJudgments, "暂无新的关键判断。")}
+              ${section("明天注意", item.tomorrowNotes, "暂无明确明天事项。")}
+              ${section("需要用户介入", item.needsUser, "暂无需要用户介入的卡点。")}
+              <div class="human-section-line"><b>证据</b><span>${escapeHtml(String(item.evidenceCount || 0))} 条有效事件</span></div>
+            </div>
+            ${item.agentActions?.length ? `<ul class="human-actions">
+              ${item.agentActions.map((action) => `<li><b>${escapeHtml(action.agent)}</b><span>${escapeHtml(action.text)}</span></li>`).join("")}
+            </ul>` : ""}
+          </li>
+        `).join("")}
+      </ol>
+      ${(human.agents || []).length ? `
+        <div class="human-agents">
+          ${(human.agents || []).map((agent) => `
+            <article>
+              <strong>${escapeHtml(agent.name)}</strong>
+              <p>${escapeHtml(agent.plain)}</p>
+            </article>
+          `).join("")}
+        </div>` : ""}
+      <p class="human-evidence">依据 ${escapeHtml(String(human.evidence?.rawEvents || 0))} 条本地记录整理，其中 ${escapeHtml(String(human.evidence?.usefulEvents || 0))} 条进入日报正文。</p>
+    </div>
   `;
 }
 
@@ -535,6 +690,8 @@ function threadFlag(thread) {
 }
 
 function renderThreads(daily) {
+  const human = activeHumanReport();
+  if (human) return renderHumanThreads(human);
   const threads = daily.threads;
   const anyDisagreement = threads.some((thread) => thread.hasDisagreement);
   const heading = anyDisagreement ? t("clash") : t("cowork");
@@ -568,6 +725,44 @@ function renderThreads(daily) {
                       <time>${node.time}</time>
                     </div>
                     <p>${escapeHtml(clip(stripCount(node.summary), 92))}</p>
+                  </li>
+                `).join("")}
+              </ol>
+            </article>
+          `).join("")}
+        </div>
+      ` : `<div class="empty">${t("threadsEmpty")}</div>`}
+    </section>
+  `;
+}
+
+function renderHumanThreads(human) {
+  const shared = (human.items || []).filter((item) => (item.agents || []).length >= 2);
+  return `
+    <section class="threads" aria-label="cross-agent threads">
+      <div class="panel-heading">
+        <div>
+          <p class="small-caps">${t("threadsCap")}</p>
+          <h3>${t("cowork")}</h3>
+        </div>
+        <span class="threads-count">${shared.length} ${t("threadsWord")}</span>
+      </div>
+      ${shared.length ? `
+        <div class="thread-list">
+          ${shared.map((item) => `
+            <article class="thread is-cowork">
+              <header class="thread-head">
+                <h4><span class="folder-pill">${escapeHtml(item.folder || item.title)}</span></h4>
+                <div class="thread-flags">${threadFlag({ implicit: true, hasDisagreement: false })}</div>
+              </header>
+              <p class="thread-sentence">${escapeHtml(item.plain)}</p>
+              <ol class="thread-chain human-thread-chain">
+                ${(item.agentActions || []).map((action) => `
+                  <li class="thread-node reply" style="--accent:${AGENTS[action.agentId]?.accent || "#1261d6"}">
+                    <div class="thread-node-meta">
+                      <strong>${escapeHtml(action.agent)}</strong>
+                    </div>
+                    <p>${escapeHtml(action.text)}</p>
                   </li>
                 `).join("")}
               </ol>
@@ -682,6 +877,9 @@ function renderTimeline(daily) {
 
 function renderAgentColumn(agent, daily) {
   const meta = AGENTS[agent.agentId];
+  const human = humanAgent(agent.agentId);
+  if (human) return renderHumanAgentColumn(agent, human, meta);
+
   const diary = composeDiary(agent);
   const mini = (label, items, warn) => items.length
     ? `<div class="agent-mini ${warn ? "warn" : ""}"><h4>${label}</h4><ul>${items.slice(0, 2).map((x) => `<li>${escapeHtml(clip(stripCount(x), 84))}</li>`).join("")}</ul></div>`
@@ -692,6 +890,33 @@ function renderAgentColumn(agent, daily) {
       <p class="agent-diary">${diary ? escapeHtml(diary) : `<span class="muted">${t("noActivity")}</span>`}</p>
       ${mini(t("tomorrowLabel"), agent.tomorrow, false)}
       ${mini(t("blockersLabel"), agent.blockers, true)}
+      <form class="composer" data-composer-agent="${agent.agentId}">
+        <textarea id="note-${agent.agentId}" name="note" placeholder="${t("composer")}"></textarea>
+        <button class="primary full-width" type="submit">${t("addNote")}</button>
+      </form>
+    </article>
+  `;
+}
+
+function renderHumanAgentColumn(agent, human, meta) {
+  const actions = humanActionsForAgent(agent.agentId);
+  const projectText = human.projects?.length
+    ? `参与 ${human.projects.length} 个文件夹：${human.projects.join("、")}`
+    : "今天没有足够可读的有效记录";
+  return `
+    <article class="agent-column human-agent-column" style="--accent:${meta.accent}; --soft:${meta.soft}">
+      <div class="agent-head"><h3>${agent.name}</h3><p>${agent.role}</p></div>
+      <p class="agent-diary">${escapeHtml(human.plain)}</p>
+      <div class="agent-summary-meta">${escapeHtml(projectText)}</div>
+      ${actions.length ? `
+        <ul class="agent-action-list">
+          ${actions.map((action) => `
+            <li>
+              <span class="folder-pill mini">${escapeHtml(action.folder)}</span>
+              <p>${escapeHtml(action.text)}</p>
+            </li>
+          `).join("")}
+        </ul>` : ""}
       <form class="composer" data-composer-agent="${agent.agentId}">
         <textarea id="note-${agent.agentId}" name="note" placeholder="${t("composer")}"></textarea>
         <button class="primary full-width" type="submit">${t("addNote")}</button>
@@ -906,7 +1131,7 @@ function renderDryRunDrawer(plan) {
       </div>
       <div class="dry-alert">
         <strong>Local-only simulation</strong>
-        <p>externalCallsMade = ${String(plan.externalCallsMade)}。没有调用飞书 API，没有创建定时任务。</p>
+        <p>外部写入：${plan.externalCallsMade ? "需要复查" : "0"}。没有调用飞书 API，没有创建定时任务。</p>
       </div>
       ${plan.targets.map((target) => `
         <article class="dry-target">

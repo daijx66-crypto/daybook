@@ -88,7 +88,9 @@ const NOISE_PROJECTS = new Set([
 ]);
 const FOLD_LABEL = "后台 / 杂项";
 function isNoiseProject(p) {
-  return NOISE_PROJECTS.has(p) || /worktree|^tmp|\bT$|^\.[A-Za-z]/.test(String(p));
+  return NOISE_PROJECTS.has(p) ||
+    /worktree|^tmp|\bT$|^\.[A-Za-z]/.test(String(p)) ||
+    /^\d{1,2}-\d{1,2}-(claude|codex|gemini)$/i.test(String(p));
 }
 function foldProject(p) {
   return isNoiseProject(p) ? FOLD_LABEL : p;
@@ -102,6 +104,7 @@ function looksHuman(s) {
   if (/instructions for \/|行为准则/i.test(t)) return false;
   if (/Asia\/Shanghai/.test(t) && t.length < 130) return false; // env_context residue
   if (/^(you are\b|you're a\b|hello memory agent|this session is being continued|please continue)/i.test(t)) return false;
+  if (/read the full prompt from stdin|follow all safety gates|do not print secrets|execute it carefully/i.test(t)) return false;
   if (/claude-mem|continuing to observe/i.test(t)) return false;
   return true;
 }

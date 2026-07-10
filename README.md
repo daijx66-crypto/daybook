@@ -48,22 +48,26 @@ Almost every multi-agent tool today fights over **space**: how to run agents in 
 
 ## Try it in 30 seconds
 
-**No install** — open the single-file build directly:
+1. Open the **[live demo](https://daijx66-crypto.github.io/daybook/)** (demo data only — no install).
+2. Or open the single-file build locally:
 
 ```bash
 open standalone.html      # macOS  (or just double-click it)
 ```
 
-**Or run the source** (zero runtime dependencies):
+3. Or run the source (zero runtime dependencies):
 
 ```bash
 npm run dev               # serves on http://127.0.0.1:5177
 ```
 
+Want to contribute? See [CONTRIBUTING.md](CONTRIBUTING.md).
+
 **See your own data** — ingest your real local agent activity (stays git-ignored, never public):
 
 ```bash
 npm run ingest:local      # reads ~/.claude, ~/.codex, ~/Desktop/codex/hermes → data/events.local.jsonl
+npm run report:human      # writes a private, human-readable daily report for the latest day
 npm run check:local       # validate it
 npm run dev               # the board now shows your real days
 ```
@@ -88,6 +92,7 @@ Because the log is the single source of truth, any future adapter or local scrip
 npm run check         # validate the projection contract
 npm run check:jsonl   # validate the JSONL handoff sample
 npm run check:security # verify fake token-shaped strings are rejected
+npm run report:human  # generate local-only human daily report JSON + Markdown
 ```
 
 ## The open handoff format
@@ -112,7 +117,7 @@ daybook ships v1 as a fully local, mock-data demo on purpose — so the idea is 
 
 ## Status & honesty
 
-The **public build ships demo data only.** Run `npm run ingest:local` to see your *real* activity locally — it reads local session files, writes redacted summaries to a **git-ignored** file, and never leaves your machine. Push-to-agent is **dry-run / copy only** in v1 (no real send, no cron, no env/keychain/secret-store reads). Live adapters and real cross-agent replies are on the roadmap above. It's all in `src/` and `scripts/` — verify it yourself.
+The **public build ships demo data only.** Run `npm run report:human` to see your *real* activity locally — it reads local session files, writes redacted summaries plus a private human-readable daily report to **git-ignored** files, and never leaves your machine. Push-to-agent is **dry-run / copy only** in v1 (no real send, no cron, no env/keychain/secret-store reads). Live adapters and real cross-agent replies are on the roadmap above. It's all in `src/` and `scripts/` — verify it yourself.
 
 ## License
 
@@ -136,4 +141,4 @@ The **public build ships demo data only.** Run `npm run ingest:local` to see you
 - **日报可推送(dry-run)**:复制 Markdown,或预览发给 Codex / Claude Code / Hermes / 飞书。v1 仅复制 / dry-run——不真实发送、不建定时任务、不读密钥。
 - **真实、本地、私密**:`npm run ingest:local` 读你自己的 Claude Code / Codex / Hermes 活动,写进 gitignore 文件;公开版只含演示数据。
 
-**试用**:`npm run ingest:local` 接入你的真实数据 → `npm run dev` 看 `http://127.0.0.1:5177`;或直接打开 `standalone.html`(演示数据)。
+**试用**:`npm run report:human` 接入你的真实数据并生成私有人话日报 → `npm run dev` 看 `http://127.0.0.1:5177`;或直接打开 `standalone.html`(演示数据)。

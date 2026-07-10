@@ -39,8 +39,12 @@ data/*.jsonl  ──►  src/projection.js  ──►  src/app.js
 npm run check          # projection contract
 npm run check:jsonl    # JSONL handoff format
 npm run check:security # fake-token rejection guardrail
+npm run report:human   # refresh local ingest + write private human-readable daily report
 npm run build:standalone   # regenerate standalone.html if src changed
 ```
 
 `standalone.html` is a generated single-file build — edit `src/`, then rebuild;
 don't hand-edit the bundle.
+
+Local human reports are private outputs: `data/daily-human-report.local.json` and
+`reports/daily/*.md` are git-ignored and must not be committed.

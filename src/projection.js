@@ -10,6 +10,17 @@ const stateWeights = {
   failed: 0.15
 };
 
+const FOLD_LABEL = "后台 / 杂项";
+const SCAFFOLD_PATTERNS = [
+  /read the full prompt from stdin/i,
+  /follow all safety gates/i,
+  /do not print secrets/i,
+  /execute it carefully/i,
+  /\bapi\s*key\b|密钥|private key|bearer token|secret/i,
+  /system-reminder/i,
+  /environment_context/i
+];
+
 export function getEvents() {
   return EVENTS;
 }
@@ -49,6 +60,26 @@ function pushLimited(list, value) {
   if (!list.includes(value)) list.push(value);
 }
 
+export function isDisplayNoise(event) {
+  const project = event?.payload?.project || "";
+  const title = event?.payload?.title || "";
+  if (project === FOLD_LABEL || title === FOLD_LABEL) return true;
+  return false;
+}
+
+export function displayLine(event) {
+  if (!event?.payload) return "";
+  const project = event.payload.project || "";
+  const title = event.payload.title || "";
+  const summary = event.payload.summary || "";
+  const text = summary.trim();
+  if (!text || isDisplayNoise(event)) return "";
+  if (SCAFFOLD_PATTERNS.some((pattern) => pattern.test(text))) return "";
+  if (project && text === project) return "";
+  if (title && text === title) return "";
+  return text;
+}
+
 function agentProjection(agentId, dayEvents) {
   const meta = AGENTS[agentId];
   const ownEvents = dayEvents.filter((event) => event.sourceAgent === agentId);
@@ -71,20 +102,20 @@ function agentProjection(agentId, dayEvents) {
   const byProject = new Map();
   ownEvents.forEach((event) => {
     const bucket = classify(event);
-    const line = event.payload.summary;
-    const realLine = line && line !== "后台 / 杂项"; // skip folded-bucket placeholder noise
+    const line = displayLine(event);
+    const realLine = Boolean(line);
     if (realLine && bucket === "done") pushLimited(projection.done, line);
     if (realLine && bucket === "learned") pushLimited(projection.learned, line);
     if (realLine && bucket === "tomorrow") pushLimited(projection.tomorrow, line);
     if (realLine && bucket === "blockers") pushLimited(projection.blockers, line);
     const proj = event.payload.project;
-    if (proj && proj !== "后台 / 杂项") {
+    if (proj && proj !== FOLD_LABEL) {
       pushLimited(projection.projects, proj);
       projection.sessionCount += event.payload.sessionCount || 1;
       if (!byProject.has(proj)) byProject.set(proj, { project: proj, count: 0, samples: [], blocker: false });
       const g = byProject.get(proj);
       g.count += event.payload.sessionCount || 1;
-      if (line && g.samples.length < 3 && !g.samples.includes(line)) g.samples.push(line);
+      if (realLine && g.samples.length < 3 && !g.samples.includes(line)) g.samples.push(line);
       if (bucket === "blockers") g.blocker = true;
     }
     event.sourceIds.forEach((sourceId) => pushLimited(projection.sourceIds, sourceId));
@@ -314,7 +345,7 @@ export function buildDailyReport(date, sourceEvents = EVENTS) {
   const sessionTotal = dayEvents.reduce((sum, e) => sum + (e.payload.sessionCount || 1), 0);
   // Per-agent sections (active agents only) — each carries its projectBreakdown so
   // the view can write a real "what they did" skeleton instead of pasting raw text.
-  const sections = daily.agents.filter((a) => a.sessionCount > 0 || a.done.length || a.learned.length);
+  const sections = daily.agents.filter((a) => a.done.length || a.learned.length || a.tomorrow.length || a.blockers.length || a.projectBreakdown.some((p) => p.samples.length));
   return {
     date,
     title: daily.title,
