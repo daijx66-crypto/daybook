@@ -20,10 +20,12 @@ const LOCAL_IMPORT_FILE = "./data/events.local.jsonl";
 const HUMAN_REPORT_FILE = "./data/daily-human-report.local.json";
 const QUALITY_REPORT_FILE = "./data/report-quality.local.json";
 const PREFS_KEY = "daybook.prefs.v1";
+const TODAY_COMMAND = "npm run today";
 const loadedLocalJournal = loadLocalJournal();
 const prefs = loadPrefs();
+const localDevHost = isLocalDevHost();
 const state = {
-  selectedDate: dates()[0].date,
+  selectedDate: beijingToday(),
   agentFilter: "all",
   rightTab: "conversation",
   conversationFilter: "all",
@@ -45,14 +47,37 @@ const state = {
   reportGen: false,
   humanReport: null,
   qualityReport: null,
-  events: mergeEvents(EVENTS, loadedLocalJournal.events),
+  // Local http://127.0.0.1 starts empty until real ingest lands; public/demo keeps seed.
+  dataMode: localDevHost ? "loading" : "demo",
+  events: localDevHost
+    ? mergeEvents([], loadedLocalJournal.events)
+    : mergeEvents(EVENTS, loadedLocalJournal.events),
   dateList: []
 };
 
-// Opening daybook should show today / the newest real journal day. Cross-agent
-// convergence is valuable, but it should not make the app land on yesterday.
+function isLocalDevHost() {
+  try {
+    const host = window.location.hostname;
+    return host === "127.0.0.1" || host === "localhost" || host === "[::1]";
+  } catch {
+    return false;
+  }
+}
+
+function beijingToday() {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(new Date());
+}
+
+// Prefer calendar today (Asia/Shanghai) when that day has real events; else newest.
 function pickDefaultDate(imported) {
   const allDates = [...new Set(imported.map((e) => e.date))].sort().reverse();
+  const today = beijingToday();
+  if (allDates.includes(today)) return today;
   return allDates[0];
 }
 
@@ -107,7 +132,13 @@ const I18N = {
     viewReport: "日报", viewCollab: "协作",
     collabCap: "今日协作", collabHeading: "今天谁在推进什么",
     convergeWith: "交汇于", convergeHeading: "同台项目", noCollab: "今天没有可视化的真实活动。",
-    collabHint: "只读复盘：行=agent，横轴=真实时间，色块=会话（按项目着色）；同色跨行=同一项目上的交汇。", sessionsUnit: "会话"
+    collabHint: "只读复盘：行=agent，横轴=真实时间，色块=会话（按项目着色）；同色跨行=同一项目上的交汇。", sessionsUnit: "会话",
+    modeReal: "真实", modeDemo: "Demo", modeSetup: "待接入", modeLoading: "加载中",
+    setupTitle: "先接入你自己的 Agent 活动",
+    setupBody: "本地还没有 events.local.jsonl。在项目根目录跑下面这一条命令，会摄入 Claude Code / Codex / Hermes 的本地活动，生成今日人话日报，并打开这块板。",
+    setupCopy: "复制命令",
+    setupHint: "公开 Pages 仍只展示 demo 数据；真实会话只留在本机 gitignore 文件里。",
+    copyCmdDone: "已复制命令"
   },
   en: {
     tagline: "Multi-agent nightly work journal", dailyReview: "Daily review · Shanghai",
@@ -139,7 +170,13 @@ const I18N = {
     viewReport: "Report", viewCollab: "Collab",
     collabCap: "Today's collaboration", collabHeading: "Who advanced what today",
     convergeWith: "converges with", convergeHeading: "Shared projects", noCollab: "No real activity to visualize today.",
-    collabHint: "Read-only review: rows = agents, x = real time, blocks = sessions (colored by project); same color across rows = they met on that project.", sessionsUnit: "sessions"
+    collabHint: "Read-only review: rows = agents, x = real time, blocks = sessions (colored by project); same color across rows = they met on that project.", sessionsUnit: "sessions",
+    modeReal: "Real", modeDemo: "Demo", modeSetup: "Setup", modeLoading: "Loading",
+    setupTitle: "Connect your own agent activity first",
+    setupBody: "No events.local.jsonl yet. From the repo root, run the command below to ingest Claude Code / Codex / Hermes activity, generate today's human report, and open this board.",
+    setupCopy: "Copy command",
+    setupHint: "Public Pages stay demo-only. Real sessions never leave git-ignored local files.",
+    copyCmdDone: "Command copied"
   }
 };
 const STANCE_I18N = {
@@ -168,13 +205,31 @@ function computeDateList(events) {
 state.dateList = computeDateList(state.events);
 state.selectedDate = state.dateList[0]?.date || state.selectedDate;
 
+function enterSetupMode() {
+  const ownNotes = state.events.filter((event) => event.sourceInstance === "mock-ui");
+  const today = beijingToday();
+  state.dataMode = "setup";
+  state.events = ownNotes;
+  state.importedCount = 0;
+  state.humanReport = null;
+  state.qualityReport = null;
+  state.dateList = [{
+    date: today,
+    weekday: new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Shanghai", weekday: "short" }).format(new Date(`${today}T12:00:00+08:00`)),
+    label: t("today"),
+    theme: "setup"
+  }];
+  state.selectedDate = today;
+  state.dateOffset = 0;
+}
+
 // Merge the user's REAL local activity (data/events.local.jsonl) when served over
 // http. Stays empty on file:// or when the file is absent — the public build never
 // ships real data. Runs after the first render, then re-renders.
 async function importLocalFile() {
   try {
     const res = await fetch(LOCAL_IMPORT_FILE, { cache: "no-store" });
-    if (!res.ok) return;
+    if (!res.ok) throw new Error("missing-local");
     const text = await res.text();
     const imported = text
       .split(/\r?\n/)
@@ -182,15 +237,14 @@ async function importLocalFile() {
       .map((line) => { try { return JSON.parse(line); } catch { return null; } })
       .filter(Boolean)
       .filter(isJournalEvent);
-    if (!imported.length) return;
+    if (!imported.length) throw new Error("empty-local");
     // Local view is 100% REAL: drop the seed demo entirely, keep only imported
     // real activity + any notes the user typed here. No fabricated data on screen.
     const ownNotes = state.events.filter((event) => event.sourceInstance === "mock-ui");
     state.events = mergeEvents(imported, ownNotes);
     state.importedCount = imported.length;
+    state.dataMode = "real";
     state.dateList = computeDateList(state.events);
-    // Land on the most recent day that actually has a cross-agent co-work thread,
-    // so the first screen shows the soul; fall back to most recent real day.
     state.selectedDate = pickDefaultDate(imported);
     const idx = state.dateList.findIndex((d) => d.date === state.selectedDate);
     state.dateOffset = idx < 0 ? 0 : Math.floor(idx / 7) * 7;
@@ -198,7 +252,13 @@ async function importLocalFile() {
     await importQualityReport();
     render();
   } catch {
-    /* file:// or no local file — expected for the standalone/public build */
+    if (localDevHost) {
+      enterSetupMode();
+      render();
+      return;
+    }
+    state.dataMode = "demo";
+    /* file:// or public Pages — keep seed demo */
   }
 }
 
@@ -301,6 +361,25 @@ function fmtDate(date) {
 
 function render() {
   applyTheme();
+  if (state.dataMode === "loading") {
+    app.innerHTML = `
+      <div class="setup-shell">
+        <div class="setup-card">
+          <p class="small-caps">daybook</p>
+          <h2>${t("modeLoading")}…</h2>
+          <p class="muted">${state.lang === "zh" ? "正在读取本机 events.local.jsonl（可能需要几秒）…" : "Reading local events.local.jsonl (may take a few seconds)…"}</p>
+          <p class="muted">${t("setupHint")}</p>
+        </div>
+      </div>
+    `;
+    return;
+  }
+  if (state.dataMode === "setup") {
+    app.innerHTML = renderSetup();
+    bindEvents();
+    return;
+  }
+
   const daily = buildDailyProjection(state.selectedDate, state.events);
   const weekly = buildWeeklyPreview(state.selectedDate, state.events);
   const plan = buildDryRunSyncPlan(state.selectedDate, state.events);
@@ -330,6 +409,66 @@ function render() {
   `;
 
   bindEvents();
+}
+
+function renderSetup() {
+  return `
+    <div class="setup-shell">
+      <div class="setup-card">
+        <div class="setup-brand">
+          <div class="brand-mark">db</div>
+          <div>
+            <h1>daybook</h1>
+            <p>夜谈台 · ${t("tagline")}</p>
+          </div>
+          <span class="mode-pill setup">${t("modeSetup")}</span>
+        </div>
+        <h2>${t("setupTitle")}</h2>
+        <p>${t("setupBody")}</p>
+        <div class="setup-command">
+          <code>${TODAY_COMMAND}</code>
+          <button class="primary compact" data-action="copy-today-cmd">${t("setupCopy")}</button>
+        </div>
+        <p class="muted">${t("setupHint")}</p>
+        <div class="capsule" role="group" aria-label="language and theme">
+          <button class="capsule-half" data-action="toggle-lang" title="中 / EN">${state.lang === "zh" ? "中" : "EN"}</button>
+          <span class="capsule-div"></span>
+          <button class="capsule-half" data-action="toggle-theme" title="light / dark">${state.theme === "dark" ? "☾" : "☀"}</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function modePill() {
+  if (state.dataMode === "real") {
+    return `<span class="mode-pill real">${t("modeReal")}${state.importedCount ? ` · ${state.importedCount}` : ""}</span>`;
+  }
+  if (state.dataMode === "demo") return `<span class="mode-pill demo">${t("modeDemo")}</span>`;
+  return `<span class="mode-pill setup">${t("modeSetup")}</span>`;
+}
+
+async function copyText(text) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch { /* fall through */ }
+  try {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.left = "-9999px";
+    document.body.append(area);
+    area.select();
+    const ok = document.execCommand("copy");
+    area.remove();
+    return ok;
+  } catch {
+    return false;
+  }
 }
 
 function renderSidebar(daily) {
@@ -382,6 +521,7 @@ function renderTopbar(daily) {
           <h1>daybook</h1>
           <p>夜谈台 · ${t("tagline")}</p>
         </div>
+        ${modePill()}
         <div class="capsule" role="group" aria-label="language and theme">
           <button class="capsule-half" data-action="toggle-lang" title="中 / EN">${langLabel}</button>
           <span class="capsule-div"></span>
@@ -602,6 +742,7 @@ function renderDailyReport(report) {
           <h3>${t("reportTitle")}</h3>
           <span class="report-badge" title="${t("mechDraftHint")}">${t("mechDraft")}</span>
         </div>
+        <button class="primary compact" data-copy-publish="markdown">${t("copyMd")}</button>
       </div>
       ${quality?.latestDay?.sparse ? renderQualityHint(quality) : ""}
       ${human ? renderHumanReport(human) : ""}
@@ -617,9 +758,8 @@ function renderDailyReport(report) {
         ${footerNext.length ? `<div class="report-block"><h4>${t("tomorrowLabel")}</h4>${list(footerNext)}</div>` : ""}
         ${footerRisks.length ? `<div class="report-block"><h4>${t("risksLabel")}</h4>${list(footerRisks)}</div>` : ""}
         <div class="report-publish">
-          <button class="secondary compact ${state.publishTarget === "markdown" ? "active" : ""}" data-publish="markdown">${t("copyMd")}</button>
           <button class="secondary compact ${state.publishTarget === "feishu" ? "active" : ""}" data-publish="feishu">Feishu dry-run</button>
-          ${(state.publishTarget === "markdown" || state.publishTarget === "feishu") ? `<div class="publish-preview"><pre>${escapeHtml(publishContent(state.publishTarget, report))}</pre><button class="primary compact" data-copy-publish="${state.publishTarget}">${t("copyMd")}</button></div>` : ""}
+          ${state.publishTarget === "feishu" ? `<div class="publish-preview"><pre>${escapeHtml(publishContent("feishu", report))}</pre><button class="primary compact" data-copy-publish="feishu">${t("copyMd")}</button></div>` : ""}
         </div>
       </div>
     </section>
@@ -1224,14 +1364,14 @@ function bindEvents() {
   });
 
   document.querySelectorAll("[data-copy-publish]").forEach((button) => {
-    button.addEventListener("click", () => {
+    button.addEventListener("click", async () => {
       const report = buildDailyReport(state.selectedDate, state.events);
       const text = publishContent(button.dataset.copyPublish, report);
-      try {
-        navigator.clipboard.writeText(text);
+      const ok = await copyText(text);
+      if (ok) {
         button.textContent = t("copied");
         setTimeout(() => { button.textContent = t("copyMd"); }, 1200);
-      } catch { /* clipboard blocked (file://) — preview is still selectable */ }
+      }
     });
   });
 
@@ -1303,6 +1443,16 @@ function handleAction(action) {
   }
   if (action === "export-events") exportEvents();
   if (action === "show-safety") state.rightTab = "safety";
+  if (action === "copy-today-cmd") {
+    copyText(TODAY_COMMAND).then((ok) => {
+      const button = document.querySelector('[data-action="copy-today-cmd"]');
+      if (ok && button) {
+        button.textContent = t("copyCmdDone");
+        setTimeout(() => { button.textContent = t("setupCopy"); }, 1200);
+      }
+    });
+    return;
+  }
   render();
 }
 
