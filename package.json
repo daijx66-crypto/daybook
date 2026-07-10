@@ -4,8 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "predev": "node scripts/ingest-local.mjs && node scripts/generate-human-report.mjs --preserve-human",
-    "dev": "python3 -m http.server 5177 --bind 127.0.0.1",
+    "today": "node scripts/today.mjs",
+    "serve": "python3 -m http.server 5177 --bind 127.0.0.1",
+    "dev": "npm run serve",
     "check": "node scripts/check-demo.mjs",
     "check:jsonl": "node scripts/validate-jsonl.mjs data/events.sample.jsonl",
     "check:security": "node scripts/check-security.mjs",

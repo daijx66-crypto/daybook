@@ -201,6 +201,19 @@ assert.ok(appSource.includes("JOURNAL_STORAGE_KEY"), "browser local journal key 
 assert.ok(appSource.includes("persistLocalJournal"), "local writes persist in browser storage");
 assert.ok(appSource.includes("exportEvents"), "local event export exists");
 assert.ok(appSource.includes("return allDates[0];"), "local import defaults to newest real day");
+assert.ok(appSource.includes('TODAY_COMMAND = "npm run today"'), "one-command today loop is documented in UI");
+assert.ok(appSource.includes('dataMode: localDevHost ? "loading" : "demo"'), "local host starts without seed demo");
+assert.ok(appSource.includes("enterSetupMode"), "empty local state shows setup guidance");
+assert.ok(appSource.includes('data-copy-publish="markdown"'), "one-click copy markdown exists on report");
+
+const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+assert.equal(pkg.scripts.today, "node scripts/today.mjs", "npm run today entry exists");
+assert.ok(pkg.scripts.serve, "npm run serve exists without forced ingest");
+
+const todayScript = await readFile(new URL("./today.mjs", import.meta.url), "utf8");
+assert.ok(todayScript.includes("ingest-local.mjs"), "today script runs ingest");
+assert.ok(todayScript.includes("generate-human-report.mjs"), "today script writes human report");
+assert.ok(todayScript.includes("127.0.0.1"), "today script serves local board");
 
 const jsonlFixture = await readFile(new URL("../data/events.sample.jsonl", import.meta.url), "utf8");
 assert.ok(jsonlFixture.includes('"sourceAgent":"codex"'), "jsonl codex sample exists");
