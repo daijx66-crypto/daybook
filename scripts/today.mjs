@@ -3,6 +3,7 @@
 // human report, then serve the board. Public Pages stay demo-data-only.
 import { spawn, spawnSync } from "node:child_process";
 import { resolve } from "node:path";
+import { beijingDate } from "./beijing-date.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const node = process.execPath;
@@ -19,7 +20,12 @@ function run(script, args = []) {
 }
 
 run("scripts/ingest-local.mjs");
-run("scripts/generate-human-report.mjs");
+run("scripts/generate-human-report.mjs", [beijingDate(), "--preserve-human"]);
+
+if (process.argv.includes("--prepare-only")) {
+  console.log("\ndaybook prepared today's local data without starting the server.");
+  process.exit(0);
+}
 
 const url = "http://127.0.0.1:5177/";
 console.log(`\ndaybook ready → ${url}`);
