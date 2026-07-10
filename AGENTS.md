@@ -37,9 +37,9 @@ data/*.jsonl  ──►  src/projection.js  ──►  src/app.js
 
 ```bash
 npm run check          # projection contract
+npm run check:today    # one-command date / empty / preserve contract
 npm run check:jsonl    # JSONL handoff format
 npm run check:security # fake-token rejection guardrail
-npm run today          # ingest + human report + local server (practical loop)
 npm run report:human   # refresh local ingest + write private human-readable daily report
 npm run build:standalone   # regenerate standalone.html if src changed
 ```

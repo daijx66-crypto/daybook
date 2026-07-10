@@ -7,6 +7,7 @@ Outcome: daybook usable tonight on real multi-agent activity via one command.
 | Check | Result |
 | --- | --- |
 | `npm run check` | passed |
+| `npm run check:today` | passed: Beijing date, zero-event first run, existing-report preservation |
 | `npm run check:security` | passed |
 | `npm run check:jsonl` | passed |
 | `npm run build:standalone` | built |
@@ -22,6 +23,11 @@ npm run today
 ```
 
 Runs ingest → human report → serves `http://127.0.0.1:5177`.
+
+The report date is pinned to the Asia/Shanghai calendar day. `--preserve-human`
+prevents the daily loop from overwriting an existing human report. The internal
+`--prepare-only` flag exercises the same ingest/report path without starting a
+long-running server, which keeps the contract regression-testable.
 
 ## Notes
 

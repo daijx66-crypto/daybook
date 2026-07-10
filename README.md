@@ -54,12 +54,12 @@ Almost every multi-agent tool today fights over **space**: how to run agents in 
 npm run today
 ```
 
-This ingests local Claude Code / Codex / Hermes activity, writes today's human-readable report into git-ignored files, and serves the board at [http://127.0.0.1:5177](http://127.0.0.1:5177). With local data present, the first screen is **your real today** — not the seed demo. With no local data yet, the board shows a setup screen with the same command to copy.
+This ingests local Claude Code / Codex / Hermes activity, preserves an existing human-edited report for the Beijing calendar day, and serves the board at [http://127.0.0.1:5177](http://127.0.0.1:5177). With local data present, the first screen is **your real activity** — Beijing today when available, otherwise the latest real day — not the seed demo. With no local data yet, the board shows a setup screen with the same command to copy.
 
 **Or browse the public demo** (demo data only — no install):
 
 1. Open the **[live demo](https://daijx66-crypto.github.io/daybook/)**
-2. Or open `standalone.html` / run `npm run serve`
+2. Or open `standalone.html`
 
 Want to contribute? See [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -67,7 +67,7 @@ Want to contribute? See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ```bash
 npm run report:human      # ingest + private human daily report
-npm run serve             # board on http://127.0.0.1:5177
+npm run serve             # local board: real data when present, setup otherwise
 ```
 
 ## How it works
